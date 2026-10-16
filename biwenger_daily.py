@@ -1,233 +1,167 @@
 #!/usr/bin/env python3
 """
-Biwenger Auto-Trader v9 — Brayan Lopez
-========================================
-Funciona 100%:
-  ✅ Login y autenticación
-  ✅ Monitorización del mercado y estado de cuenta
-  ✅ Ventas automáticas (solo si es necesario y hay reemplazo)
-  ✅ Compras automáticas (ofertas al mercado libre)
-  ✅ Alineación automática (4-4-2 optimizada por posición)
-  ✅ Sistema de logs completo
+Biwenger Auto-Trader v10
+========================
+Cambios respecto a v9 (ver CHANGELOG al final del fichero):
+  - Corregidos los fallos que cortaban la ejecución (threshold / offers_data).
+  - p_start y localía se usan de verdad en el scorer.
+  - Dificultad del rival: solo el PRÓXIMO partido de cada equipo.
+  - "Partido cerca" calculado con fechas reales (con respaldo conservador).
+  - Ofertas recibidas: se simula la plantilla resultante antes de aceptar.
+  - La alineación se bloquea de verdad si faltan posiciones.
+  - Capitán / ariete preparados (activar con variables de entorno).
+  - Toda la configuración por variables de entorno o fichero .env.
+  - Modo --dry-run (no escribe nada) y --probe (descubre campos de la API).
 
-Operaciones implementadas:
-  - POST /api/v2/auth/login → token
-  - GET  /api/v2/account → league_id, user_id, balance
-  - GET  /api/v2/market → sales (free + propias)
-  - POST /api/v2/market → vender jugador propio (solo si es necesario)
-  - GET  /api/v2/user?fields=players(id,name),lineup(...) → squad con posiciones
-  - POST /api/v2/offers → crear oferta de compra
-  - PUT  /api/v2/offers/{id} → aumentar puja
-  - DELETE /api/v2/offers/{id} → retirar oferta
-  - PUT  /api/v2/user?fields=*%2Clineup(date) → alinear 4-4-2
-  - Sistema de logs: biwenger_log.json + biwenger_log.txt
+Uso:
+  python3 biwenger_daily.py              # ejecución normal
+  python3 biwenger_daily.py --dry-run    # simula, sin escrituras
+  python3 biwenger_daily.py --probe      # vuelca los campos de lineup (capitán/ariete)
+
+Códigos de salida: 0 ok · 1 error · 3 token/credenciales · 5 X-Version obsoleta · 6 rate limit
 """
 
-import requests, json, sys, time, os
-from datetime import datetime, timezone
+import json
+import os
+import random
+import sys
+import time
+from datetime import datetime, timedelta
 
-EMAIL = os.environ.get("BIWENGER_EMAIL", "")
-PASSWORD = os.environ.get("BIWENGER_PASSWORD", "")
-STATE_FILE = "/opt/data/biwenger_state.json"
-TODO_FILE = "/opt/data/biwenger_todo.md"
-LOG_FILE = "/opt/data/biwenger_log.json"
-LOG_TXT_FILE = "/opt/data/biwenger_log.txt"
-MAX_RETRIES = 1
-RETRY_DELAY = 120
-REQUEST_TIMEOUT = 30
-LEAGUE_ID = int(os.environ.get("BIWENGER_LEAGUE_ID", "0"))
-USER_ID = int(os.environ.get("BIWENGER_USER_ID", "0"))
-MAX_WRITES = 8
+import requests
 
-UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
-# ── Sistema de Logs ──────────────────────────────────────
+# ──────────────────────────────────────────────────────────
+# Configuración (variables de entorno / .env)
+# ──────────────────────────────────────────────────────────
 
-def log_action(action_type, details, status="info"):
-    """Registra una acción en el log JSON y TXT."""
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    # Log JSON
-    log_entry = {
-        "timestamp": timestamp,
-        "action": action_type,
-        "status": status,
-        "details": details
-    }
-    
-    # Leer log existente
-    logs = []
-    if os.path.exists(LOG_FILE):
-        try:
-            with open(LOG_FILE, "r") as f:
-                logs = json.load(f)
-        except:
-            logs = []
-    
-    logs.append(log_entry)
-    
-    # Guardar log JSON
-    with open(LOG_FILE, "w") as f:
-        json.dump(logs, f, indent=2, ensure_ascii=False)
-    
-    # Log TXT (más legible)
-    with open(LOG_TXT_FILE, "a") as f:
-        f.write(f"[{timestamp}] [{status.upper()}] {action_type}: {json.dumps(details, ensure_ascii=False)}\n")
-    
-    return log_entry
+def _load_dotenv(path):
+    """Carga un .env sencillo (KEY=VALUE). No pisa variables ya definidas."""
+    if not os.path.exists(path):
+        return
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
 
 
-def log_print(msg):
-    """Imprime y registra en el log."""
-    print(msg)
-    with open(LOG_TXT_FILE, "a") as f:
-        f.write(f"  {msg}\n")
+_load_dotenv(os.path.join(BASE_DIR, ".env"))
 
+
+def env_str(name, default=""):
+    return (os.environ.get(name) or default).strip()
+
+
+def env_int(name, default):
+    try:
+        return int(float(os.environ.get(name, default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def env_float(name, default):
+    try:
+        return float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def env_bool(name, default=False):
+    v = os.environ.get(name)
+    if v is None or v.strip() == "":
+        return default
+    return v.strip().lower() in ("1", "true", "yes", "y", "si", "sí", "on")
+
+
+# Credenciales
+EMAIL = env_str("BIWENGER_EMAIL")
+PASSWORD = env_str("BIWENGER_PASSWORD")
+TOKEN = env_str("BIWENGER_TOKEN")          # opcional: si existe, no se hace login
+LEAGUE_ID = env_int("BIWENGER_LEAGUE_ID", 0)   # 0 = automático
+USER_ID = env_int("BIWENGER_USER_ID", 0)       # 0 = automático
+
+# API
+APP_VERSION = env_str("BIWENGER_VERSION", "631")   # cabecera X-Version
+UA = env_str(
+    "BIWENGER_USER_AGENT",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36",
+)
+REQUEST_TIMEOUT = env_int("BIWENGER_REQUEST_TIMEOUT", 30)
+MAX_RETRIES = env_int("BIWENGER_MAX_RETRIES", 1)
+RETRY_DELAY = env_int("BIWENGER_RETRY_DELAY", 30)
+REQUEST_DELAY = env_float("BIWENGER_REQUEST_DELAY", 0.8)       # pausa media entre peticiones
+START_JITTER_MAX = env_int("BIWENGER_START_JITTER_MAX", 0)     # segundos aleatorios al empezar
+RATE_LIMIT_WAIT_HOURS = env_float("BIWENGER_RATE_LIMIT_WAIT_HOURS", 4)
+
+# Ficheros
+DATA_DIR = env_str("BIWENGER_DATA_DIR", "/opt/data")
+try:
+    os.makedirs(DATA_DIR, exist_ok=True)
+    if not os.access(DATA_DIR, os.W_OK):
+        raise OSError("sin permiso de escritura")
+except OSError:
+    DATA_DIR = os.path.join(BASE_DIR, "data")
+    os.makedirs(DATA_DIR, exist_ok=True)
+
+STATE_FILE = os.path.join(DATA_DIR, "biwenger_state.json")
+TODO_FILE = os.path.join(DATA_DIR, "biwenger_todo.md")
+LOG_FILE = os.path.join(DATA_DIR, "biwenger_log.json")
+LOG_TXT_FILE = os.path.join(DATA_DIR, "biwenger_log.txt")
+PROBE_FILE = os.path.join(DATA_DIR, "biwenger_probe.json")
+RATE_FILE = os.path.join(DATA_DIR, "biwenger_ratelimit.json")
+MAX_LOG_ENTRIES = env_int("BIWENGER_MAX_LOG_ENTRIES", 1500)
+
+# Límites de actividad
+MAX_WRITES = env_int("BIWENGER_MAX_WRITES", 8)
+MAX_BUYS = env_int("BIWENGER_MAX_BUYS", 2)
+MAX_SELLS = env_int("BIWENGER_MAX_SELLS", 2)
+MIN_SQUAD = env_int("BIWENGER_MIN_SQUAD", 12)      # nunca bajar de esta plantilla por ventas
+MAX_SQUAD = env_int("BIWENGER_MAX_SQUAD", 0)       # 0 = sin comprobar tope de plantilla
+DRY_RUN = env_bool("BIWENGER_DRY_RUN", False)
+
+# Alineación / scorer
+MIN_LINEUP_GAIN = env_float("BIWENGER_MIN_LINEUP_GAIN", 0.05)
+SELL_SCORE_MIN = env_float("BIWENGER_SELL_SCORE_MIN", 2.0)
+MATCH_SOON_HOURS = env_float("BIWENGER_MATCH_SOON_HOURS", 48)
+MIN_P_START_BUY = env_float("BIWENGER_MIN_P_START_BUY", 0.7)
+CAPTAIN_KEY = env_str("BIWENGER_CAPTAIN_KEY")      # p. ej. "captain" (vacío = desactivado)
+STRIKER_KEY = env_str("BIWENGER_STRIKER_KEY")      # p. ej. "striker" (vacío = desactivado)
+CAPTAIN_MAX_VALUE = env_int("BIWENGER_CAPTAIN_MAX_VALUE", 0)  # 0 = sin tope de valor
+
+# Compras / pujas
+BUY_MARGIN = env_float("BIWENGER_BUY_MARGIN", 0.05)
+CUSHION_PCT = env_float("BIWENGER_CUSHION_PCT", 0.08)
+CUSHION_MIN = env_int("BIWENGER_CUSHION_MIN", 500000)
+BID_LOW = env_float("BIWENGER_BID_LOW", 1.04)
+BID_MID = env_float("BIWENGER_BID_MID", 1.10)
+BID_HIGH = env_float("BIWENGER_BID_HIGH", 1.20)
+MAX_BID_PCT = env_float("BIWENGER_MAX_BID_PCT", 1.25)
+BID_PLUS_ONE = env_bool("BIWENGER_BID_PLUS_ONE", True)  # +1 € para evitar empates exactos
+
+# Ofertas recibidas
+ACCEPT_NORMAL = env_float("BIWENGER_ACCEPT_NORMAL", 1.10)
+ACCEPT_HIGH = env_float("BIWENGER_ACCEPT_HIGH", 1.25)
+ACCEPT_INJURED = env_float("BIWENGER_ACCEPT_INJURED", 0.90)
+MAX_DROP_PCT = env_float("BIWENGER_MAX_DROP_PCT", 0.08)
+
+BAD_STATUS = {"injured", "suspended", "sanctioned"}
+POS_NAMES = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
 
 # Multiplicador por estado real del jugador. 0.0 = no puede puntuar.
 STATUS_MULT = {
     "ok": 1.00,
-    "warned": 0.85,      # apercibido: riesgo de sanción
-    "doubt": 0.55,       # duda
+    "warned": 0.85,   # apercibido: riesgo de sanción
+    "doubt": 0.55,    # duda
     "injured": 0.00,
     "suspended": 0.00,
     "sanctioned": 0.00,
 }
-
-
-def score_player(cat_player, diff_rating, p_start=1.0, is_home=None):
-    """
-    Puntúa a un jugador (~0-6) para el PRÓXIMO partido usando datos reales:
-      - estado real (injured/suspended/sanctioned → 0)
-      - media de puntos por partido de la temporada      (peso 35%)
-      - forma reciente: media de los últimos 5 partidos  (peso 35%)
-      - dificultad del rival: rating 0-100, MENOR = rival más flojo = más puntos (peso 30%)
-      - probabilidad de titularidad (p_start 0-1)
-      - localía: +5% casa, -5% fuera (opcional)
-      - fallback pointsLastSeason × 0.8 si aún no ha jugado esta temporada
-    Devuelve (score, explicación).
-    """
-    if not cat_player:
-        return 0.0, "sin datos en catálogo"
-
-    status = (cat_player.get("status") or "ok").lower()
-    mult = STATUS_MULT.get(status, 0.7)
-    if mult == 0.0:
-        return 0.0, f"status={status} (no puntúa)"
-
-    games = (cat_player.get("playedHome") or 0) + (cat_player.get("playedAway") or 0)
-    pts = cat_player.get("points") or 0
-    season_avg = pts / games if games else 0.0
-    if games == 0:
-        # Sin partidos esta temporada → usar la anterior como referencia (~30 jornadas) × 0.8
-        last = cat_player.get("pointsLastSeason") or 0
-        season_avg = (last / 30.0 * 0.8) if last else 0.0
-
-    fit = [f for f in (cat_player.get("fitness") or []) if isinstance(f, (int, float))]
-    last5 = fit[-5:]
-    fit_avg = sum(last5) / len(last5) if last5 else 0.0
-
-    # rating 0-100: MENOR = rival más flojo = mejor para nosotros
-    if diff_rating is None:
-        easy = 0.5  # rival desconocido → neutro
-    else:
-        easy = (100.0 - float(diff_rating)) / 100.0
-
-    base = 0.35 * season_avg + 0.35 * fit_avg + 3.0 * 0.30 * easy
-    score = round(base * mult * p_start, 3)
-    
-    # Localía: +5% casa, -5% fuera
-    locality = ""
-    if is_home is not None:
-        locality_mult = 1.05 if is_home else 0.95
-        score = round(score * locality_mult, 3)
-        locality = f" local={'casa' if is_home else 'fuera'}"
-    
-    why = (f"{status} pts/partido={season_avg:.2f} forma={fit_avg:.2f} "
-           f"rival_facilidad={easy:.2f} p_start={p_start:.2f}{locality}")
-    return score, why
-
-
-def get_catalog(session, token, league_id, user_id):
-    """
-    GET cf.biwenger.com/api/v2/competitions/la-liga/data?lang=es&score=3
-    Catálogo completo (~547 jugadores) con position, status, points,
-    playedHome/playedAway, fitness, pointsLastSeason y teamID.
-    Devuelve (players_dict, teams_dict) indexados por str(id).
-    """
-    h = get_headers(token, {"X-League": str(league_id), "X-User": str(user_id), "X-Version": "631"})
-    r = requests.get(
-        "https://cf.biwenger.com/api/v2/competitions/la-liga/data?lang=es&score=3",
-        headers=h,
-        timeout=REQUEST_TIMEOUT,
-    )
-    if r is None or r.status_code != 200:
-        return {}, {}
-    data = r.json().get("data", {})
-    return (data.get("players") or {}), (data.get("teams") or {})
-
-
-def get_next_match_date(session, token, league_id, user_id):
-    """
-    Obtiene la fecha del próximo partido de La Liga desde la API de Biwenger.
-    Devuelve (datetime or None, round_name).
-    """
-    h = get_headers(token, {"X-League": str(league_id), "X-User": str(user_id), "X-Version": "631"})
-    r = requests.get(
-        "https://biwenger.as.com/api/v2/rounds/league",
-        headers=h,
-        timeout=REQUEST_TIMEOUT,
-    )
-    if r is None or r.status_code != 200:
-        return None, None
-    data = r.json().get("data", {})
-    round_info = data.get("round", {})
-    round_name = round_info.get("name")
-    # La API no da fecha directa del próximo partido, pero podemos inferir
-    # que los partidos de La Liga suelen ser fines de semana.
-    # Si es viernes/sábado/domingo, el próximo partido es hoy o mañana.
-    from datetime import datetime as dt, timedelta
-    today = dt.now()
-    weekday = today.weekday()  # 0=Lunes, 6=Domingo
-    # Si es jueves o viernes, el próximo partido probablemente es en 1-2 días
-    if weekday in (3, 4):  # Jueves o Viernes
-        return today + timedelta(days=1), round_name
-    # Si es sábado o domingo, el próximo partido puede ser hoy
-    if weekday in (5, 6):
-        return today, round_name
-    # Si es lunes/miércoles, el próximo partido probablemente es en 2-3 días
-    return today + timedelta(days=2), round_name
-
-
-def get_fixture_info(lineup_players):
-    """
-    Extrae el mapa de dificultad del PRÓXIMO partido por equipo desde
-    lineup.players[].team.nextGames. El endpoint de squad sí devuelve
-    difficulty(rating); el catálogo no.
-    Cubre los equipos implicados en los partidos de los 11 titulares (16/20).
-    Devuelve (diff_map, games_map, round_name).
-    """
-    diff_map, games_map, round_name = {}, {}, None
-    for p in lineup_players:
-        if not p or not p.get("team"):
-            continue
-        for g in (p["team"].get("nextGames") or []):
-            if round_name is None:
-                round_name = (g.get("round") or {}).get("name")
-            h = g.get("home") or {}
-            a = g.get("away") or {}
-            hid, aid = h.get("id"), a.get("id")
-            dh = (h.get("difficulty") or {}).get("rating")
-            da = (a.get("difficulty") or {}).get("rating")
-            if dh is not None:
-                diff_map[hid] = dh
-                games_map[hid] = {"rival": a.get("name") or str(aid), "cond": "casa", "round": round_name}
-            if da is not None:
-                diff_map[aid] = da
-                games_map[aid] = {"rival": h.get("name") or str(hid), "cond": "fuera", "round": round_name}
-    return diff_map, games_map, round_name
-
 
 # Formaciones soportadas: (nombre, DEF, MID, FWD). 1 GK fijo.
 FORMATIONS = [
@@ -241,11 +175,453 @@ FORMATIONS = [
 ]
 
 
-def build_smart_lineup(squad_ids, catalog, diff_map):
+# ──────────────────────────────────────────────────────────
+# Logs
+# ──────────────────────────────────────────────────────────
+
+def log_action(action_type, details, status="info"):
+    """Registra una acción en el log JSON (rotado) y en el TXT."""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    entry = {"timestamp": timestamp, "action": action_type, "status": status, "details": details}
+    logs = []
+    if os.path.exists(LOG_FILE):
+        try:
+            with open(LOG_FILE, "r", encoding="utf-8") as f:
+                logs = json.load(f)
+        except (OSError, ValueError):
+            logs = []
+    logs.append(entry)
+    logs = logs[-MAX_LOG_ENTRIES:]
+    try:
+        with open(LOG_FILE, "w", encoding="utf-8") as f:
+            json.dump(logs, f, indent=2, ensure_ascii=False)
+        if os.path.exists(LOG_TXT_FILE) and os.path.getsize(LOG_TXT_FILE) > 2_000_000:
+            os.replace(LOG_TXT_FILE, LOG_TXT_FILE + ".1")
+        with open(LOG_TXT_FILE, "a", encoding="utf-8") as f:
+            f.write(f"[{timestamp}] [{status.upper()}] {action_type}: "
+                    f"{json.dumps(details, ensure_ascii=False, default=str)}\n")
+    except OSError:
+        pass
+    return entry
+
+
+def log_print(msg):
+    print(msg)
+    try:
+        with open(LOG_TXT_FILE, "a", encoding="utf-8") as f:
+            f.write(f"  {msg}\n")
+    except OSError:
+        pass
+
+
+# ──────────────────────────────────────────────────────────
+# Capa HTTP
+# ──────────────────────────────────────────────────────────
+
+class RateLimited(Exception):
+    pass
+
+
+class OldVersion(Exception):
+    pass
+
+
+class AuthError(Exception):
+    pass
+
+
+REQ = {"count": 0}
+
+
+def get_headers(token=None, league_id=None, user_id=None):
+    h = {
+        "User-Agent": UA,
+        "Accept": "application/json, text/plain, */*",
+        "Content-Type": "application/json",
+        "X-Lang": "es",
+        "X-Version": APP_VERSION,
+        "Origin": "https://biwenger.as.com",
+        "Referer": "https://biwenger.as.com/",
+    }
+    if token:
+        h["Authorization"] = f"Bearer {token}"
+    if league_id:
+        h["X-League"] = str(league_id)
+    if user_id:
+        h["X-User"] = str(user_id)
+    return h
+
+
+def api(method, url, token=None, league_id=None, user_id=None, body=None):
+    """Petición con reintento por red, pausa entre llamadas y errores tipados."""
+    headers = get_headers(token, league_id, user_id)
+    for attempt in range(MAX_RETRIES + 1):
+        REQ["count"] += 1
+        try:
+            r = requests.request(method, url, headers=headers, json=body, timeout=REQUEST_TIMEOUT)
+        except requests.RequestException as e:
+            if attempt < MAX_RETRIES:
+                time.sleep(RETRY_DELAY)
+                continue
+            log_action("network_error", {"method": method, "url": url, "error": str(e)}, "error")
+            return None
+        if REQUEST_DELAY > 0:
+            time.sleep(random.uniform(0.7, 1.3) * REQUEST_DELAY)
+        if r.status_code == 429:
+            raise RateLimited(url)
+        if r.status_code == 401:
+            raise AuthError(url)
+        if r.status_code == 400 and "old version" in (r.text or "").lower():
+            raise OldVersion(url)
+        return r
+    return None
+
+
+def rate_limit_active():
+    try:
+        with open(RATE_FILE, "r", encoding="utf-8") as f:
+            until = datetime.fromisoformat(json.load(f)["until"])
+        if datetime.now() < until:
+            return until
+    except (OSError, ValueError, KeyError):
+        pass
+    return None
+
+
+def set_rate_limit():
+    until = datetime.now() + timedelta(hours=RATE_LIMIT_WAIT_HOURS)
+    try:
+        with open(RATE_FILE, "w", encoding="utf-8") as f:
+            json.dump({"until": until.isoformat()}, f)
+    except OSError:
+        pass
+    return until
+
+
+def parse_ts(v):
+    """Interpreta una fecha (epoch s/ms o ISO) como datetime local sin zona."""
+    if v is None:
+        return None
+    try:
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            if v > 1e11:
+                v = v / 1000.0
+            return datetime.fromtimestamp(v)
+        if isinstance(v, str):
+            s = v.strip()
+            if s.isdigit():
+                return parse_ts(int(s))
+            dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+            if dt.tzinfo:
+                dt = dt.astimezone().replace(tzinfo=None)
+            return dt
+    except (ValueError, OSError, OverflowError):
+        return None
+    return None
+
+
+# ──────────────────────────────────────────────────────────
+# Lecturas de la API
+# ──────────────────────────────────────────────────────────
+
+def login():
+    """POST /api/v2/auth/login → token Bearer."""
+    if not EMAIL or not PASSWORD:
+        raise ValueError("Faltan BIWENGER_EMAIL / BIWENGER_PASSWORD (o BIWENGER_TOKEN)")
+    r = api("POST", "https://biwenger.as.com/api/v2/auth/login",
+            body={"email": EMAIL, "password": PASSWORD})
+    if r is None or r.status_code != 200:
+        raise ValueError(f"Login fallido: {None if r is None else r.status_code}")
+    data = r.json()
+    token = data.get("token") or (data.get("data") or {}).get("token")
+    if not token:
+        raise ValueError("Login sin token")
+    return token
+
+
+def get_account(token):
+    """GET /api/v2/account → league_id, user_id, balance, points, name."""
+    r = api("GET", "https://biwenger.as.com/api/v2/account", token)
+    if r is None or r.status_code != 200:
+        raise ValueError(f"Account error: {None if r is None else r.status_code}")
+    data = r.json().get("data", {})
+    leagues = data.get("leagues", [])
+    if not leagues:
+        raise ValueError("No hay ligas activas")
+    league = leagues[0]
+    if LEAGUE_ID:
+        league = next((lg for lg in leagues if lg.get("id") == LEAGUE_ID), leagues[0])
+    user = league.get("user", {})
+    league_id = league.get("id")
+    user_id = USER_ID or user.get("id")
+    if not league_id or not user_id:
+        raise ValueError(f"Account incompleto: {league}")
+    return league_id, user_id, user.get("balance", 0), user.get("points", 0), user.get("name", "?")
+
+
+SQUAD_FIELDS = (
+    "players(id),"
+    "lineup(round,id,type,playersID,reservesID,"
+    "players(id,name,position,altPositions,status,fitness,points,price,"
+    "team(id,name,slug,nextGames(*))))"
+)
+
+
+def get_squad(ctx):
+    """Plantilla completa + alineación actual + titulares con team.nextGames."""
+    r = api("GET", "https://biwenger.as.com/api/v2/user?fields=" + SQUAD_FIELDS,
+            ctx.token, ctx.league_id, ctx.user_id)
+    if r is None or r.status_code != 200:
+        return None, None, None
+    data = r.json().get("data", {})
+    squad_ids = [p.get("id") for p in data.get("players", []) if isinstance(p, dict) and p.get("id")]
+    lineup = data.get("lineup") or {}
+    return squad_ids, lineup, lineup.get("players") or []
+
+
+def get_catalog(ctx):
+    """Catálogo de La Liga: posición, estado, puntos, forma, precio, equipo."""
+    r = api("GET", "https://cf.biwenger.com/api/v2/competitions/la-liga/data?lang=es&score=3",
+            ctx.token, ctx.league_id, ctx.user_id)
+    if r is None or r.status_code != 200:
+        return {}, {}
+    data = r.json().get("data", {})
+    return (data.get("players") or {}), (data.get("teams") or {})
+
+
+def get_round_name(ctx):
+    r = api("GET", "https://biwenger.as.com/api/v2/rounds/league", ctx.token, ctx.league_id, ctx.user_id)
+    if r is None or r.status_code != 200:
+        return None
+    return ((r.json().get("data") or {}).get("round") or {}).get("name")
+
+
+def get_market(ctx):
+    """GET /api/v2/market → (ventas libres, ventas propias)."""
+    r = api("GET", "https://biwenger.as.com/api/v2/market", ctx.token, ctx.league_id, ctx.user_id)
+    if r is None or r.status_code != 200:
+        return [], []
+    sales = (r.json().get("data") or {}).get("sales", [])
+    free_sales = [s for s in sales if s.get("user") is None]
+    own_sales = [s for s in sales if (s.get("user") or {}).get("id") == ctx.user_id]
+    return free_sales, own_sales
+
+
+def get_offers(ctx):
+    """GET /api/v2/offers → lista de ofertas (una sola llamada por ejecución)."""
+    r = api("GET", "https://biwenger.as.com/api/v2/offers", ctx.token, ctx.league_id, ctx.user_id)
+    if r is None or r.status_code != 200:
+        return []
+    data = r.json().get("data")
+    return [o for o in data if isinstance(o, dict)] if isinstance(data, list) else []
+
+
+def offer_player_ids(o):
+    ids = []
+    for rp in (o.get("requestedPlayers") or []):
+        if isinstance(rp, dict) and rp.get("id"):
+            ids.append(rp["id"])
+        elif isinstance(rp, int):
+            ids.append(rp)
+    return ids
+
+
+# ──────────────────────────────────────────────────────────
+# Escrituras (todas respetan --dry-run)
+# ──────────────────────────────────────────────────────────
+
+def sell_player(ctx, player_id, price):
+    """POST /api/v2/market → poner en venta. 204 = éxito."""
+    sell_price = price if price and price > 0 else 1
+    if DRY_RUN:
+        log_action("dry_run", {"op": "sell", "player_id": player_id, "price": sell_price})
+        return True, "dry_run", sell_price
+    r = api("POST", "https://biwenger.as.com/api/v2/market", ctx.token, ctx.league_id, ctx.user_id,
+            {"player": player_id, "price": sell_price})
+    if r is None:
+        return False, "network_error", sell_price
+    if r.status_code in (200, 201, 204):
+        return True, "ok", sell_price
+    return False, f"http_{r.status_code}: {r.text[:120]}", sell_price
+
+
+def answer_offer(ctx, offer_id, status):
+    """PUT /api/v2/offers/{id} con status accepted/rejected."""
+    if DRY_RUN:
+        log_action("dry_run", {"op": f"offer_{status}", "offer_id": offer_id})
+        return True, "dry_run"
+    r = api("PUT", f"https://biwenger.as.com/api/v2/offers/{offer_id}", ctx.token, ctx.league_id,
+            ctx.user_id, {"status": status})
+    if r is None:
+        return False, "network_error"
+    if r.status_code in (200, 201):
+        return True, "ok"
+    return False, f"http_{r.status_code}: {r.text[:150]}"
+
+
+def create_purchase_offer(ctx, player_id, amount):
+    """POST /api/v2/offers → oferta de compra al mercado libre."""
+    if DRY_RUN:
+        log_action("dry_run", {"op": "buy", "player_id": player_id, "amount": amount})
+        return True, None, "dry_run"
+    r = api("POST", "https://biwenger.as.com/api/v2/offers", ctx.token, ctx.league_id, ctx.user_id,
+            {"to": None, "type": "purchase", "amount": amount, "requestedPlayers": [player_id]})
+    if r is None:
+        return False, None, "network_error"
+    if r.status_code in (200, 201):
+        data = r.json().get("data", {})
+        return True, data.get("id"), data.get("status", "unknown")
+    return False, None, f"http_{r.status_code}: {r.text[:150]}"
+
+
+def retract_offer(ctx, offer_id):
+    """DELETE /api/v2/offers/{id} → retirar oferta propia. 204 = éxito."""
+    if DRY_RUN:
+        log_action("dry_run", {"op": "retract", "offer_id": offer_id})
+        return True, "dry_run"
+    r = api("DELETE", f"https://biwenger.as.com/api/v2/offers/{offer_id}", ctx.token,
+            ctx.league_id, ctx.user_id)
+    if r is None:
+        return False, "network_error"
+    if r.status_code in (200, 201, 204):
+        return True, "ok"
+    return False, f"http_{r.status_code}: {r.text[:150]}"
+
+
+def set_lineup(ctx, players_ids, formation, captain_id=None, striker_id=None):
+    """PUT /api/v2/user?fields=*%2Clineup(date) con la alineación (y capitán/ariete si están configurados)."""
+    lineup = {"type": formation, "playersID": players_ids, "reservesID": []}
+    if CAPTAIN_KEY and captain_id:
+        lineup[CAPTAIN_KEY] = captain_id
+    if STRIKER_KEY and striker_id:
+        lineup[STRIKER_KEY] = striker_id
+    if DRY_RUN:
+        log_action("dry_run", {"op": "lineup", "lineup": lineup})
+        return True, {"dry_run": True}
+    r = api("PUT", "https://biwenger.as.com/api/v2/user?fields=*%2Clineup(date)", ctx.token,
+            ctx.league_id, ctx.user_id, {"lineup": lineup})
+    if r is None:
+        return False, "network_error"
+    if r.status_code == 200:
+        return True, r.json()
+    return False, f"http_{r.status_code}: {r.text[:200]}"
+
+
+# ──────────────────────────────────────────────────────────
+# Scorer y alineación
+# ──────────────────────────────────────────────────────────
+
+def _numeric(f):
+    return isinstance(f, (int, float)) and not isinstance(f, bool)
+
+
+def estimate_p_start(cp, games):
     """
-    Puntúa a TODOS los jugadores del squad (titulares Y suplentes) con
-    score_player() y elige la mejor alineación, probando varias formaciones.
-    Devuelve (ids, formacion, detalle, pool).
+    Probabilidad aproximada de ser titular, a partir de cuántas de las últimas 5 jornadas
+    consta puntuación numérica en `fitness` (0 de 5 → 0.2 · 5 de 5 → 1.0).
+    Sin datos: 0.6 si aún no ha jugado, 0.7 en caso contrario. Es una heurística.
+    """
+    last = (cp.get("fitness") or [])[-5:]
+    if not last:
+        return 0.6 if games == 0 else 0.7
+    played = sum(1 for f in last if _numeric(f))
+    return round(0.2 + 0.8 * played / len(last), 3)
+
+
+def home_flag(games_map, team_id):
+    cond = (games_map.get(team_id) or {}).get("cond")
+    return True if cond == "casa" else False if cond == "fuera" else None
+
+
+def score_player(cp, diff_rating, p_start=None, is_home=None):
+    """
+    Puntúa a un jugador (~0-6) para el PRÓXIMO partido:
+      0.35·media temporada + 0.35·forma (últimos 5) + 0.90·facilidad del rival,
+      × multiplicador de estado × p_start × localía (+5 % casa / −5 % fuera).
+    Devuelve (score, explicación, p_start).
+    """
+    if not cp:
+        return 0.0, "sin datos en catálogo", 0.0
+    status = (cp.get("status") or "ok").lower()
+    mult = STATUS_MULT.get(status, 0.7)
+    games = (cp.get("playedHome") or 0) + (cp.get("playedAway") or 0)
+    if p_start is None:
+        p_start = estimate_p_start(cp, games)
+    if mult == 0.0:
+        return 0.0, f"status={status} (no puntúa)", p_start
+
+    pts = cp.get("points") or 0
+    season_avg = pts / games if games else 0.0
+    if games == 0:
+        last = cp.get("pointsLastSeason") or 0
+        season_avg = (last / 30.0 * 0.8) if last else 0.0
+
+    fit = [f for f in (cp.get("fitness") or []) if _numeric(f)][-5:]
+    fit_avg = sum(fit) / len(fit) if fit else 0.0
+
+    # rating 0-100: MENOR = rival más flojo = mejor para nosotros
+    easy = 0.5 if diff_rating is None else (100.0 - float(diff_rating)) / 100.0
+
+    base = 0.35 * season_avg + 0.35 * fit_avg + 3.0 * 0.30 * easy
+    score = base * mult * p_start
+    loc = ""
+    if is_home is not None:
+        score *= 1.05 if is_home else 0.95
+        loc = f" local={'casa' if is_home else 'fuera'}"
+    why = (f"{status} pts/partido={season_avg:.2f} forma={fit_avg:.2f} "
+           f"rival_facilidad={easy:.2f} p_start={p_start:.2f}{loc}")
+    return round(score, 3), why, p_start
+
+
+def get_fixture_info(lineup_players):
+    """
+    Dificultad y condición del PRÓXIMO partido por equipo (solo el primero de nextGames,
+    en orden cronológico si hay fechas). Devuelve (diff_map, games_map, round_name, kickoffs).
+    """
+    diff_map, games_map, kickoffs = {}, {}, {}
+    round_name = None
+    seen = set()
+    now = datetime.now()
+    for p in lineup_players:
+        team = (p or {}).get("team")
+        if not team:
+            continue
+        tid = team.get("id")
+        if tid in seen:
+            continue
+        seen.add(tid)
+        games = [g for g in (team.get("nextGames") or []) if isinstance(g, dict)]
+        if not games:
+            continue
+        dated = [(parse_ts(g.get("date")), g) for g in games]
+        if all(d is not None for d, _ in dated):
+            dated.sort(key=lambda x: x[0])
+            upcoming = [x for x in dated if x[0] >= now - timedelta(hours=3)]
+            dated = upcoming or dated
+        gdate, g = dated[0]
+        if round_name is None:
+            round_name = (g.get("round") or {}).get("name")
+        h, a = g.get("home") or {}, g.get("away") or {}
+        hid, aid = h.get("id"), a.get("id")
+        dh = (h.get("difficulty") or {}).get("rating")
+        da = (a.get("difficulty") or {}).get("rating")
+        if hid is not None and dh is not None and hid not in diff_map:
+            diff_map[hid] = dh
+            games_map[hid] = {"rival": a.get("name") or str(aid), "cond": "casa", "round": round_name}
+        if aid is not None and da is not None and aid not in diff_map:
+            diff_map[aid] = da
+            games_map[aid] = {"rival": h.get("name") or str(hid), "cond": "fuera", "round": round_name}
+        if gdate:
+            for t in (hid, aid):
+                if t is not None:
+                    kickoffs.setdefault(t, gdate)
+    return diff_map, games_map, round_name, kickoffs
+
+
+def build_smart_lineup(squad_ids, catalog, diff_map, games_map):
+    """
+    Puntúa a TODO el squad y elige la mejor formación.
+    Devuelve (ids, formación, detalle, pool). ids = [GK] + DEF + MID + FWD.
     """
     pool = {}
     for pid in squad_ids:
@@ -253,968 +629,679 @@ def build_smart_lineup(squad_ids, catalog, diff_map):
         if not cp:
             continue
         tid = cp.get("teamID")
-        s, why = score_player(cp, diff_map.get(tid))
+        s, why, ps = score_player(cp, diff_map.get(tid), None, home_flag(games_map, tid))
         pool[pid] = {
-            "id": pid,
-            "name": cp.get("name", f"id={pid}"),
-            "position": cp.get("position", 0),
-            "altPositions": cp.get("altPositions") or [],
-            "team_id": tid,
-            "score": s,
-            "why": why,
-            "status": cp.get("status"),
+            "id": pid, "name": cp.get("name", f"id={pid}"), "position": cp.get("position", 0),
+            "altPositions": cp.get("altPositions") or [], "team_id": tid, "score": s, "why": why,
+            "status": cp.get("status"), "p_start": ps, "price": cp.get("price", 0) or 0,
         }
-
     by_pos = {1: [], 2: [], 3: [], 4: []}
     for e in pool.values():
         if e["position"] in by_pos:
             by_pos[e["position"]].append(e)
     for k in by_pos:
         by_pos[k].sort(key=lambda x: x["score"], reverse=True)
-
     if not by_pos[1]:
         return None, None, None, pool
 
     best = None
     for name, nd, nm, nf in FORMATIONS:
-        if (len(by_pos[2]) < nd) or (len(by_pos[3]) < nm) or (len(by_pos[4]) < nf):
+        if len(by_pos[2]) < nd or len(by_pos[3]) < nm or len(by_pos[4]) < nf:
             continue
         gk = by_pos[1][0]
-        dfs = by_pos[2][:nd]
-        mds = by_pos[3][:nm]
-        fws = by_pos[4][:nf]
+        dfs, mds, fws = by_pos[2][:nd], by_pos[3][:nm], by_pos[4][:nf]
         total = gk["score"] + sum(e["score"] for e in dfs + mds + fws)
-        cand = {
-            "formation": name,
-            "ids": [gk["id"]] + [e["id"] for e in dfs + mds + fws],
-            "total": round(total, 3),
-            "gk": [gk], "def": dfs, "mid": mds, "fwd": fws,
-        }
+        cand = {"formation": name, "ids": [gk["id"]] + [e["id"] for e in dfs + mds + fws],
+                "total": round(total, 3), "gk": [gk], "def": dfs, "mid": mds, "fwd": fws}
         if best is None or cand["total"] > best["total"]:
             best = cand
-
     if best is None:
         return None, None, None, pool
     return best["ids"], best["formation"], best, pool
 
 
-def get_headers(token, extra=None):
-    h = {
-        "Authorization": f"Bearer {token}",
-        "User-Agent": UA,
-        "Accept": "application/json, text/plain, */*",
-        "Content-Type": "application/json",
-        "X-Lang": "es",
-        "Origin": "https://biwenger.as.com",
-        "Referer": "https://biwenger.as.com/",
-    }
-    if extra:
-        h.update(extra)
-    return h
+def choose_captain_and_striker(detail):
+    """Capitán = mayor puntuación esperada con titularidad casi segura. Ariete = mejor delantero."""
+    if not detail:
+        return None, None
+    starters = detail["gk"] + detail["def"] + detail["mid"] + detail["fwd"]
+    ok = [e for e in starters if (e.get("status") or "ok").lower() == "ok" and e["score"] > 0]
+    if CAPTAIN_MAX_VALUE > 0:
+        ok = [e for e in ok if e.get("price", 0) <= CAPTAIN_MAX_VALUE]
+    safe = [e for e in ok if e["p_start"] >= 0.85] or ok
+    cap = max(safe, key=lambda e: e["score"]) if safe else None
+    fwds = sorted([e for e in safe if e["position"] == 4], key=lambda e: e["score"], reverse=True)
+    striker = fwds[0] if fwds else None
+    if striker and cap and striker["id"] == cap["id"] and len(fwds) > 1 \
+            and fwds[1]["score"] >= 0.9 * striker["score"]:
+        striker = fwds[1]   # diversifica el riesgo si hay alternativa casi igual de buena
+    return (cap["id"] if cap else None), (striker["id"] if striker else None)
 
 
-def login(session):
-    """POST /api/v2/auth/login → token Bearer."""
-    r = requests.post(
-        "https://biwenger.as.com/api/v2/auth/login",
-        json={"email": EMAIL, "password": PASSWORD},
-        headers={"Content-Type": "application/json"},
-        timeout=REQUEST_TIMEOUT,
-    )
-    if r is None or r.status_code != 200:
-        raise ValueError(f"Login fallido: {r}")
-    data = r.json()
-    token = data.get("token") or data.get("data", {}).get("token")
-    if not token:
-        raise ValueError(f"Login sin token: {data}")
-    session.headers.update({
-        "Authorization": f"Bearer {token}",
-        "User-Agent": UA,
-        "Origin": "https://biwenger.as.com",
-        "Referer": "https://biwenger.as.com/",
-    })
-    return token
+# ──────────────────────────────────────────────────────────
+# Contexto de la ejecución
+# ──────────────────────────────────────────────────────────
+
+class Ctx:
+    def __init__(self):
+        self.token = None
+        self.league_id = 0
+        self.user_id = 0
+        self.balance = 0
+        self.points = 0
+        self.user_name = "?"
+        self.squad_ids = []
+        self.lineup_info = {}
+        self.lineup_ids = []
+        self.catalog = {}
+        self.diff_map = {}
+        self.games_map = {}
+        self.round_name = None
+        self.match_soon = True
+        self.hours_to_kickoff = None
+        self.next_kickoff = None
+        self.offers = []
+        self.free_market = []
+        self.my_sale_ids = set()
+        self.pending_ids = set()
+        self.committed = 0
+        self.pool = {}
+        self.opt_ids = []
+        self.opt_type = None
+        self.opt_detail = None
+        self.actions = []
+        self.write_count = 0
+        self.rate_limited = False
+        self.captain_id = None
+        self.striker_id = None
+
+    def can_write(self):
+        return self.write_count < MAX_WRITES
+
+    def act(self, kind, **details):
+        self.actions.append({"type": kind, **details})
+
+    def recompute(self):
+        ids, ftype, detail, pool = build_smart_lineup(
+            self.squad_ids, self.catalog, self.diff_map, self.games_map)
+        self.opt_ids, self.opt_type, self.opt_detail, self.pool = ids or [], ftype, detail, pool
+
+    def cushion(self):
+        team_value = sum((self.catalog.get(str(pid)) or {}).get("price", 0) or 0 for pid in self.squad_ids)
+        return max(team_value * CUSHION_PCT, CUSHION_MIN)
 
 
-def get_account(session, token):
-    """GET /api/v2/account → league_id, user_id, balance, points, name."""
-    r = requests.get(
-        "https://biwenger.as.com/api/v2/account",
-        headers=get_headers(token),
-        timeout=REQUEST_TIMEOUT,
-    )
-    if r is None or r.status_code != 200:
-        raise ValueError(f"Account error: {r}")
-    data = r.json().get("data", {})
-    leagues = data.get("leagues", [])
-    if not leagues:
-        raise ValueError("No hay ligas activas")
-    league = leagues[0]
-    user = league.get("user", {})
-    league_id = league.get("id")
-    user_id = user.get("id")
-    if not league_id or not user_id:
-        raise ValueError(f"Account incompleto: {league}")
-    return league_id, user_id, user.get("balance", 0), user.get("points", 0), user.get("name", "?")
-
-
-def get_market(session, token, league_id, user_id):
-    """GET /api/v2/market → sales[] con free + propias."""
-    h = get_headers(token, {"X-League": str(league_id), "X-User": str(user_id), "X-Version": "631"})
-    r = requests.get("https://biwenger.as.com/api/v2/market", headers=h, timeout=REQUEST_TIMEOUT)
-    if r is None or r.status_code != 200:
-        return [], []
-    data = r.json().get("data", {})
-    sales = data.get("sales", [])
-    free_sales = [s for s in sales if s.get("user") is None]
-    user_sales = [s for s in sales if s.get("user") is not None and s.get("user", {}).get("id") == user_id]
-    return free_sales, user_sales
-
-
-def get_free_market_with_positions(session, token, league_id, user_id, catalog=None):
-    """
-    Combina dos endpoints:
-    1. GET biwenger.as.com/api/v2/market → jugadores en venta en la liga privada
-    2. GET cf.biwenger.com/api/v2/competitions/la-liga/market?interval=day&includeValues=true → posiciones
-    3. FALLBACK: si cf.biwenger.com está bloqueado (403), usar el catálogo de La Liga
-       para obtener posiciones de TODOS los jugadores del free market.
-    Devuelve lista de jugadores en venta con position (1=GK, 2=DEF, 3=MID, 4=FWD).
-    """
-    # 1. Obtener jugadores en venta de la liga privada
-    h = get_headers(token, {"X-League": str(league_id), "X-User": str(user_id), "X-Version": "631"})
-    r = requests.get("https://biwenger.as.com/api/v2/market", headers=h, timeout=REQUEST_TIMEOUT)
-    if r is None or r.status_code != 200:
-        return []
-    sales = r.json().get("data", {}).get("sales", [])
-    free_sales = [s for s in sales if s.get("user") is None]
-    
-    # 2. Intentar obtener posiciones de cf.biwenger.com (ups/downs del mercado general)
-    # OJO: este endpoint devuelve jugadores que suben/bajan de precio, NO los que
-    # están en venta en la liga privada. Por eso solo cubre ~2/10 del free market.
-    position_map = {}
-    r_cf = requests.get(
-        "https://cf.biwenger.com/api/v2/competitions/la-liga/market?interval=day&includeValues=true",
-        headers=h,
-        timeout=REQUEST_TIMEOUT,
-    )
-    if r_cf is not None and r_cf.status_code == 200:
-        cf_data = r_cf.json().get("data", {})
-        for key in ("ups", "downs"):
-            for p in cf_data.get(key, []):
-                if isinstance(p, dict) and "id" in p and "position" in p:
-                    position_map[p["id"]] = p
-    
-    # 3. FALLBACK: si los IDs del free market NO están en position_map, usar el catálogo
-    # de La Liga (548 jugadores con posiciones) para obtener TODOS los que faltan.
-    if catalog:
-        free_ids_en_venta = {s.get("player", {}).get("id") for s in free_sales}
-        faltan = free_ids_en_venta - set(position_map.keys())
-        if faltan:
-            log_print(f"  ℹ️ {len(faltan)} jugadores del free market no están en ups/downs — usando catálogo La Liga")
-            for pid_str, cp in catalog.items():
-                try:
-                    pid = int(pid_str)
-                except (ValueError, TypeError):
-                    continue
-                if pid in faltan:
-                    position_map[pid] = {
-                        "id": pid,
-                        "name": cp.get("name", f"id={pid}"),
-                        "position": cp.get("position", 0),
-                        "status": cp.get("status", "ok"),
-                    }
-    
-    # 4. Combinar: jugadores en venta + posiciones
+def build_free_market(ctx, free_sales):
+    """Jugadores del mercado libre con posición, estado y score ya calculados."""
     result = []
     for s in free_sales:
-        pid = s.get("player", {}).get("id")
-        if pid and pid in position_map:
-            p = position_map[pid]
-            result.append({
-                "id": pid,
-                "name": p.get("name", f"id={pid}"),
-                "position": p.get("position", 0),
-                "price": s.get("price", 0),
-                "status": p.get("status", "ok"),
-            })
-    
+        pid = (s.get("player") or {}).get("id")
+        cp = ctx.catalog.get(str(pid)) if pid else None
+        if not cp:
+            continue
+        tid = cp.get("teamID")
+        sc, why, ps = score_player(cp, ctx.diff_map.get(tid), None, home_flag(ctx.games_map, tid))
+        result.append({
+            "id": pid, "name": cp.get("name", f"id={pid}"), "position": cp.get("position", 0),
+            "price": s.get("price") or cp.get("price") or 0,
+            "status": (cp.get("status") or "ok").lower(),
+            "score": sc, "why": why, "p_start": ps, "team_id": tid,
+        })
     return result
 
 
-def get_pending_offers(session, token, league_id, user_id):
-    """
-    GET /api/v2/offers → lista de ofertas.
-    Devuelve set de player_ids con oferta 'waiting' propia (para no duplicar pujas).
-    """
-    h = get_headers(token, {"X-League": str(league_id), "X-User": str(user_id), "X-Version": "631"})
-    r = requests.get("https://biwenger.as.com/api/v2/offers", headers=h, timeout=REQUEST_TIMEOUT)
-    if r is None or r.status_code != 200:
-        return set()
-    data = r.json().get("data")
-    if not isinstance(data, list):
-        return set()
-    pend = set()
-    for o in data:
-        if not isinstance(o, dict):
-            continue
-        if o.get("status") != "waiting":
-            continue
-        # Solo ofertas hechas POR nosotros (from = nuestro user)
-        frm = o.get("from") or {}
-        if frm.get("id") != user_id:
-            continue
-        for rp in (o.get("requestedPlayers") or []):
-            if isinstance(rp, dict) and rp.get("id"):
-                pend.add(rp["id"])
-            elif isinstance(rp, int):
-                pend.add(rp)
-    return pend
+# ──────────────────────────────────────────────────────────
+# Etapas
+# ──────────────────────────────────────────────────────────
 
-
-def get_received_offers(session, token, league_id, user_id):
-    """
-    GET /api/v2/offers → ofertas RECIBIDAS (from=null, to=nuestro user).
-    Devuelve lista de ofertas con status 'waiting' que otros usuarios nos han hecho.
-    """
-    h = get_headers(token, {"X-League": str(league_id), "X-User": str(user_id), "X-Version": "631"})
-    r = requests.get("https://biwenger.as.com/api/v2/offers", headers=h, timeout=REQUEST_TIMEOUT)
-    if r is None or r.status_code != 200:
-        return []
-    data = r.json().get("data")
-    if not isinstance(data, list):
-        return []
-    received = []
-    for o in data:
-        if not isinstance(o, dict):
-            continue
-        if o.get("status") != "waiting":
-            continue
-        # Ofertas RECIBIDAS: from=null, to=nuestro user
-        frm = o.get("from") or {}
-        to = o.get("to") or {}
-        if frm.get("id") is None and to.get("id") == user_id:
-            received.append(o)
-    return received
-
-
-def accept_offer(session, token, league_id, user_id, offer_id):
-    """PUT /api/v2/offers/{id} {'status': 'accepted'} → aceptar oferta recibida."""
-    h = get_headers(token, {"X-League": str(league_id), "X-User": str(user_id), "X-Version": "631"})
-    r = requests.put(
-        f"https://biwenger.as.com/api/v2/offers/{offer_id}",
-        json={"status": "accepted"},
-        headers=h,
-        timeout=REQUEST_TIMEOUT,
-    )
-    if r.status_code in (200, 201):
-        return True, "ok"
-    return False, f"http_{r.status_code}: {r.text[:150]}"
-
-
-def reject_offer(session, token, league_id, user_id, offer_id):
-    """PUT /api/v2/offers/{id} {'status': 'rejected'} → rechazar oferta recibida."""
-    h = get_headers(token, {"X-League": str(league_id), "X-User": str(user_id), "X-Version": "631"})
-    r = requests.put(
-        f"https://biwenger.as.com/api/v2/offers/{offer_id}",
-        json={"status": "rejected"},
-        headers=h,
-        timeout=REQUEST_TIMEOUT,
-    )
-    if r.status_code in (200, 201):
-        return True, "ok"
-    return False, f"http_{r.status_code}: {r.text[:150]}"
-
-
-def sell_player(session, token, league_id, user_id, player_id, price=None):
-    """
-    POST /api/v2/market → vender jugador propio. 204 = éxito.
-    Si price es None, usar el precio de mercado del catálogo (price=0 da 'Low sell price').
-    """
-    h = get_headers(token, {"X-League": str(league_id), "X-User": str(user_id), "X-Version": "631"})
-    # Si no hay precio, usar 1 como mínimo (el API rechaza 0 y precios muy bajos)
-    sell_price = price if price is not None and price > 0 else 1
-    r = requests.post(
-        "https://biwenger.as.com/api/v2/market",
-        json={"player": player_id, "price": sell_price},
-        headers=h,
-        timeout=REQUEST_TIMEOUT,
-    )
-    if r.status_code in (200, 201, 204):
-        return True, "ok", sell_price
-    if r.status_code == 429:
-        return False, "rate_limited", sell_price
-    return False, f"http_{r.status_code}: {r.text[:120]}", sell_price
-
-
-def get_squad_with_positions(session, token, league_id, user_id):
-    """
-    GET /api/v2/user?fields=players(id),lineup(...)
-    Devuelve:
-      - squad_ids: lista de IDs de TODO el squad (titulares + suplentes)
-      - lineup: {type, playersID, players: [...]}
-      - lineup_players: jugadores titulares con team.nextGames (para dificultad)
-    Las posiciones están en lineup.players[i].position (1=GK, 2=DEF, 3=MID, 4=FWD)
-    """
-    h = get_headers(token, {"X-League": str(league_id), "X-User": str(user_id), "X-Version": "631"})
-    r = requests.get(
-        "https://biwenger.as.com/api/v2/user"
-        "?fields=players(id),"
-        "lineup(round,id,type,playersID,reservesID,"
-        "players(id,name,position,altPositions,status,fitness,points,price,"
-        "team(id,name,slug,nextGames(*))))",
-        headers=h,
-        timeout=REQUEST_TIMEOUT,
-    )
-    if r is None or r.status_code != 200:
-        return None, None, None
-    data = r.json().get("data", {})
-    squad_ids = [p.get("id") for p in data.get("players", []) if isinstance(p, dict) and p.get("id")]
-    lineup = data.get("lineup", {})
-    return squad_ids, lineup, lineup.get("players", [])
-
-
-def set_lineup(session, token, league_id, user_id, players_ids, formation="4-4-2"):
-    """
-    PUT /api/v2/user?fields=*%2Clineup(date)
-    Body: {"lineup": {"type": "4-4-2", "playersID": [...], "reservesID": []}}
-    Headers: X-League, X-User, X-Version: 631
-    200 = éxito.
-    """
-    h = get_headers(token, {"X-League": str(league_id), "X-User": str(user_id), "X-Version": "631"})
-    payload = {
-        "lineup": {
-            "type": formation,
-            "playersID": players_ids,
-            "reservesID": [],
-        }
-    }
-    r = requests.put(
-        "https://biwenger.as.com/api/v2/user?fields=*%2Clineup(date)",
-        json=payload,
-        headers=h,
-        timeout=REQUEST_TIMEOUT,
-    )
-    if r.status_code == 200:
-        return True, r.json()
-    if r.status_code == 400:
-        return False, f"400: {r.text[:200]}"
-    if r.status_code == 403:
-        return False, f"403: {r.text[:200]}"
-    return False, f"http_{r.status_code}: {r.text[:200]}"
-
-
-def create_purchase_offer(session, token, league_id, user_id, player_id, amount):
-    """
-    POST /api/v2/offers → crear oferta de compra.
-    Body: {"to": null, "type": "purchase", "amount": X, "requestedPlayers": [id]}
-    Headers: X-League, X-User, X-Version: 631
-    200 = éxito, devuelve {"status":"waiting","id":...}
-    """
-    h = get_headers(token, {"X-League": str(league_id), "X-User": str(user_id), "X-Version": "631"})
-    payload = {
-        "to": None,
-        "type": "purchase",
-        "amount": amount,
-        "requestedPlayers": [player_id],
-    }
-    r = requests.post("https://biwenger.as.com/api/v2/offers", json=payload, headers=h, timeout=REQUEST_TIMEOUT)
-    if r.status_code in (200, 201):
-        data = r.json().get("data", {})
-        return True, data.get("id"), data.get("status", "unknown")
-    if r.status_code == 429:
-        return False, None, "rate_limited"
-    return False, None, f"http_{r.status_code}: {r.text[:150]}"
-
-
-def increase_offer(session, token, league_id, user_id, offer_id, new_amount, player_id):
-    """PUT /api/v2/offers/{id} → aumentar puja."""
-    h = get_headers(token, {"X-League": str(league_id), "X-User": str(user_id), "X-Version": "631"})
-    payload = {
-        "to": None,
-        "type": "purchase",
-        "amount": new_amount,
-        "requestedPlayers": [player_id],
-    }
-    r = requests.put(f"https://biwenger.as.com/api/v2/offers/{offer_id}", json=payload, headers=h, timeout=REQUEST_TIMEOUT)
-    if r.status_code in (200, 201):
-        return True, r.json()
-    return False, f"http_{r.status_code}: {r.text[:150]}"
-
-
-def retract_offer(session, token, league_id, user_id, offer_id):
-    """DELETE /api/v2/offers/{id} → retirar oferta. 204 = éxito."""
-    h = get_headers(token, {"X-League": str(league_id), "X-User": str(user_id), "X-Version": "631"})
-    r = requests.delete(f"https://biwenger.as.com/api/v2/offers/{offer_id}", headers=h, timeout=REQUEST_TIMEOUT)
-    if r.status_code in (200, 201, 204):
-        return True, "ok"
-    return False, f"http_{r.status_code}: {r.text[:150]}"
-
-
-def run():
-    now = datetime.now()
-    print(f"\n{'='*60}")
-    print(f"Biwenger Auto-Trader v8 — {now.strftime('%Y-%m-%d %H:%M')}")
-    print(f"{'='*60}")
-
-    biw = requests.Session()
-    try:
-        token = login(biw)
-        print("✅ Login OK")
-    except Exception as e:
-        print(f"❌ Login fallido: {e}")
-        sys.exit(1)
-
-    # ── Account ────────────────────────────────────────
-    print("\n--- Account ---")
-    try:
-        league_id, user_id, balance, points, user_name = get_account(biw, token)
-        biw.headers.update({"X-League": str(league_id), "X-User": str(user_id), "X-Version": "631"})
-        print(f"  {user_name} | {points}pts | €{balance:,}")
-        print(f"  Liga: {league_id}")
-    except Exception as e:
-        print(f"  ❌ Account error: {e}")
-        sys.exit(1)
-
-    # ── Squad con posiciones ───────────────────────────
-    print("\n--- Squad ---")
-    squad_ids, lineup_info, lineup_players = get_squad_with_positions(biw, token, league_id, user_id)
-    if lineup_info is None:
-        print("  ❌ No se pudo obtener squad")
-        sys.exit(1)
-
-    lineup_type = lineup_info.get("type", "?")
-    lineup_ids_list = lineup_info.get("playersID", []) or []
-    print(f"  {len(squad_ids)} jugadores en plantilla | formación actual: {lineup_type}")
-
-    # ── Catálogo completo (posiciones, estado, puntos, forma) ──
-    print("\n--- Catálogo La Liga ---")
-    catalog, cat_teams = get_catalog(biw, token, league_id, user_id)
-    print(f"  {len(catalog)} jugadores | {len(cat_teams)} equipos")
-
-    # ── Dificultad del próximo rival (desde team.nextGames) ──
-    diff_map, games_map, round_name = get_fixture_info(lineup_players)
-    print(f"  Dificultad de rival conocida para {len(diff_map)} equipos | {round_name or 'próxima jornada'}")
-
-    # ── Market ─────────────────────────────────────────
-    print("\n--- Market ---")
-    free_sales, user_sales = get_market(biw, token, league_id, user_id)
-    print(f"  Total ventas: {len(free_sales) + len(user_sales)} | Free: {len(free_sales)} | Propias: {len(user_sales)}")
-
-    if free_sales:
-        print(f"  Free market (top 5):")
-        for s in free_sales[:5]:
-            p = s.get("player", {})
-            print(f"    {p.get('name','?')} (id={p.get('id')}) €{s.get('price',0):,} | {s.get('status','?')}")
-
-    # ── Optimización de alineación (scorer real) ───────
-    print("\n--- Optimización ---")
-    opt_all_ids, opt_type, opt_detail, pool = build_smart_lineup(squad_ids, catalog, diff_map)
-
-    if opt_all_ids:
-        pos_names = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
-        print(f"  Puntuación de la plantilla ({len(pool)} jugadores):")
-        for e in sorted(pool.values(), key=lambda x: x["score"], reverse=True):
-            gm = games_map.get(e["team_id"], {})
-            rival = gm.get("rival", "?")
-            cond = gm.get("cond", "?")
-            dr = diff_map.get(e["team_id"])
-            dr_txt = f"dif={dr}" if dr is not None else "dif=?"
-            print(f"    {e['name']:20} {pos_names.get(e['position'],'?'):3} score={e['score']:6.3f} "
-                  f"vs {rival} ({cond}) {dr_txt}")
-            print(f"        {e['why']}")
-
-        print(f"\n  Mejor alineación: {opt_type} (total={opt_detail['total']})")
-        print(f"    GK:  {[e['name'] for e in opt_detail['gk']]}")
-        print(f"    DEF: {[e['name'] for e in opt_detail['def']]}")
-        print(f"    MID: {[e['name'] for e in opt_detail['mid']]}")
-        print(f"    FWD: {[e['name'] for e in opt_detail['fwd']]}")
-
-        # ¿Quién entra y quién sale respecto a la alineación actual?
-        entran = [i for i in opt_all_ids if i not in lineup_ids_list]
-        salen = [i for i in lineup_ids_list if i not in opt_all_ids]
-        if entran or salen:
-            nm = {e["id"]: e["name"] for e in pool.values()}
-            print(f"\n  Cambios propuestos:")
-            for i in entran:
-                print(f"    ⬆️  ENTRA: {nm.get(i, i)}")
-            for i in salen:
-                print(f"    ⬇️  SALE:  {nm.get(i, i)}")
-        else:
-            print(f"\n  ✅ La alineación actual ya es la mejor puntuada")
-        log_action("lineup_eval", {
-            "formation": opt_type,
-            "total": opt_detail["total"],
-            "entran": [pool[i]["name"] for i in entran if i in pool],
-            "salen": [pool[i]["name"] for i in salen if i in pool],
-        }, "info")
-    else:
-        opt_all_ids = []
-        print("  ⚠️ No hay porteros en el squad → no se puede optimizar alineación")
-        log_action("lineup_eval", {"result": "no_goalkeepers"}, "warning")
-
-    # ── Ejecutar acciones ──────────────────────────────
-    print(f"\n--- Acciones ---")
-    actions = []
-    write_count = 0
-
-    # ESTRATEGIA PARA MAXIMIZAR PUNTOS SIN POSICIONES LIBRES:
-    # 1. Vender SUPLENTES con score muy bajo/lesionados para liberar espacio
-    #    (no toca a los titulares → no hay posiciones libres)
-    # 2. Comprar jugadores del free market que mejoren a los titulares
-    # 3. Vender los TITULARES reemplazados (ahora son suplentes)
-    # 4. Alinear con los mejores 11
-    free_market = get_free_market_with_positions(biw, token, league_id, user_id, catalog=catalog)
-
-    pos_names = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
-    pending = get_pending_offers(biw, token, league_id, user_id)
-    if pending:
-        print(f"  ⏸ Ya tenemos ofertas activas por: {sorted(pending)}")
-
-    # 0. PROCESAR OFERTAS RECIBIDAS — aceptar/rechazar ofertas de otros usuarios
-    print(f"\n  0. Procesando ofertas recibidas:")
-    next_match_date, next_round_name = get_next_match_date(biw, token, league_id, user_id)
-    if next_match_date:
-        from datetime import datetime as dt, timedelta
-        days_until_match = (next_match_date - dt.now()).days
-        print(f"    Próximo partido: {next_round_name} en ~{days_until_match} días")
-        # Si el partido es mañana o pasado mañana, ser más conservador con las ventas
-        match_soon = days_until_match <= 2
-    else:
-        match_soon = False
-    received_offers = get_received_offers(biw, token, league_id, user_id)
-    if received_offers:
-        print(f"    Ofertas recibidas: {len(received_offers)}")
-        for offer in received_offers:
-            offer_id = offer.get("id")
-            offer_amount = offer.get("amount", 0)
-            requested = offer.get("requestedPlayers") or []
-            player_id = None
-            for rp in requested:
-                if isinstance(rp, dict) and rp.get("id"):
-                    player_id = rp["id"]
-                elif isinstance(rp, int):
-                    player_id = rp
-            if not player_id:
-                continue
-            # Buscar el jugador en nuestro pool
-            player_entry = pool.get(player_id)
-            if not player_entry:
-                # Si no está en el pool, buscar en el catálogo directamente
-                cp = catalog.get(str(player_id))
-                if cp:
-                    player_entry = {
-                        "id": player_id,
-                        "name": cp.get("name", f"id={player_id}"),
-                        "position": cp.get("position", 0),
-                        "status": cp.get("status", "ok"),
-                        "score": 0,
-                    }
-                else:
-                    print(f"    ⚠️ Oferta {offer_id}: jugador id={player_id} no encontrado en pool ni catálogo")
-                    continue
-            player_name = player_entry.get("name", f"id={player_id}")
-            # Precio de venta actual (si está en venta)
-            market_price = 0
-            cp = catalog.get(str(player_id))
-            if cp:
-                market_price = cp.get("price", 0)
-            # Criterios mejorados de ofertas recibidas:
-            # 1. Aceptar si oferta >= 110% del mercado y hay reemplazo
-            # 2. Aceptar si lesionado/sancionado y oferta >= 90% del mercado
-            # 3. Aceptar si oferta >= 125% del mercado aunque no haya reemplazo
-            # 4. Rechazar el resto
-            st = (player_entry.get("status") or "ok").lower()
-            is_injured = st in ("injured", "suspended", "sanctioned")
-            ratio = (offer_amount / market_price * 100) if market_price > 0 else 0
-            threshold_110 = market_price * 1.1 if market_price > 0 else offer_amount * 0.9
-            threshold_90 = market_price * 0.9 if market_price > 0 else offer_amount * 0.9
-            threshold_125 = market_price * 1.25 if market_price > 0 else offer_amount * 1.25
-            
-            # Distinguir entre oferta del Computer y oferta de usuario
-            is_computer_offer = abs(ratio - 100) <= 5 if market_price > 0 else False
-            if is_computer_offer:
-                print(f"    📱 Oferta del Computer #{offer_id} por {player_name} (id={player_id}) — €{offer_amount:,} (ratio={ratio:.1f}%)")
-            else:
-                print(f"    👤 Oferta de usuario #{offer_id} por {player_name} (id={player_id}) — €{offer_amount:,} (ratio={ratio:.1f}%)")
-            
-            # Verificar si hay reemplazo disponible (misma posición, estado ok, score >=)
-            has_replacement = False
-            if player_entry:
-                pos = player_entry.get("position", 0)
-                for r in free_market:
-                    if (r.get("position") == pos and r.get("status") == "ok" and 
-                        r.get("score", 0) >= player_entry.get("score", 0)):
-                        has_replacement = True
-                        break
-            
-            accept = False
-            reason = ""
-            if offer_amount >= threshold_125:
-                accept = True
-                reason = f"oferta >= 125% mercado (ratio={ratio:.1f}%)"
-            elif offer_amount >= threshold_110 and has_replacement:
-                accept = True
-                reason = f"oferta >= 110% mercado y hay reemplazo (ratio={ratio:.1f}%)"
-            elif is_injured and offer_amount >= threshold_90:
-                accept = True
-                reason = f"lesionado/sancionado y oferta >= 90% mercado (ratio={ratio:.1f}%)"
-            
-            if accept:
-                print(f"    ✅ Aceptando oferta #{offer_id} por {player_name} (id={player_id}) — {reason}")
-                ok, msg = accept_offer(biw, token, league_id, user_id, offer_id)
-                if ok:
-                    print(f"    ✅ Oferta aceptada")
-                    actions.append({"type": "offer_accepted", "offer_id": offer_id,
-                                    "player_id": player_id, "player_name": player_name,
-                                    "amount": offer_amount})
-                    write_count += 1
-                    log_action("offer_accepted", {"offer_id": offer_id, "player_id": player_id,
-                                                  "player_name": player_name, "amount": offer_amount}, "success")
-                else:
-                    print(f"    ❌ Error aceptando: {msg}")
-                    log_action("offer_accept_failed", {"offer_id": offer_id, "reason": msg}, "error")
-            else:
-                print(f"    ❌ Rechazando oferta #{offer_id} por {player_name} (id={player_id}) — €{offer_amount:,} < €{threshold:,.0f} (ratio={ratio:.1f}%)")
-                ok, msg = reject_offer(biw, token, league_id, user_id, offer_id)
-                if ok:
-                    print(f"    ✅ Oferta rechazada")
-                    actions.append({"type": "offer_rejected", "offer_id": offer_id,
-                                    "player_id": player_id, "player_name": player_name,
-                                    "amount": offer_amount})
-                    write_count += 1
-                    log_action("offer_rejected", {"offer_id": offer_id, "player_id": player_id,
-                                                  "player_name": player_name, "amount": offer_amount}, "success")
-                else:
-                    print(f"    ❌ Error rechazando: {msg}")
-                    log_action("offer_reject_failed", {"offer_id": offer_id, "reason": msg}, "error")
-    else:
-        print(f"    ✅ No hay ofertas recibidas")
-
-    # 1. VENTAS DE SUPLENTES — liberar espacio sin tocar titulares
-    #    VALIDACIÓN: solo vender si hay reemplazo en el free market para evitar posiciones libres
-    print(f"\n  1. Ventas de suplentes (con validación de reemplazo):")
-    suplentes_to_sell = []
-    for e in pool.values():
-        if e["id"] in lineup_ids_list:
-            continue  # NO vender titulares aquí
-        st = (e.get("status") or "ok").lower()
-        if st in ("injured", "suspended", "sanctioned"):
-            # Lesionados/suspendidos: vender solo si hay reemplazo
-            has_replacement = any(
-                r.get("position") == e["position"] and r.get("status") == "ok"
-                for r in free_market
-            )
-            if has_replacement:
-                suplentes_to_sell.append({**e, "reason": f"status={st} (con reemplazo)"})
-            else:
-                print(f"    ⏸ {e['name']} ({st}) — sin reemplazo en mercado, no se vende")
-        elif e["score"] < 2.0:
-            # Score bajo: vender solo si hay reemplazo
-            # Si el partido está cerca (<=2 días), ser más conservador y no vender por score bajo
-            if match_soon:
-                print(f"    ⏸ {e['name']} (score={e['score']:.3f}) — partido cerca, se mantiene para asegurar equipo completo")
-                continue
-            has_replacement = any(
-                r.get("position") == e["position"] and r.get("status") == "ok"
-                for r in free_market
-            )
-            if has_replacement:
-                suplentes_to_sell.append({**e, "reason": f"score_bajo={e['score']:.3f} (con reemplazo)"})
-            else:
-                print(f"    ⏸ {e['name']} (score={e['score']:.3f}) — sin reemplazo en mercado, no se vende")
-
-    if suplentes_to_sell:
-        for cand in suplentes_to_sell:
-            # Usar precio de mercado del catálogo (el API rechaza precios muy bajos)
-            cp = catalog.get(str(cand["id"]))
-            market_price = cp.get("price", 0) if cp else 0
-            sell_price = max(market_price, 1)
-            print(f"\n  Vendiendo suplente {cand['name']} (score={cand['score']:.3f}) — {cand['reason']} | precio venta=€{sell_price:,}")
-            ok, msg, used_price = sell_player(biw, token, league_id, user_id, cand["id"], sell_price)
+def stage_cleanup_offers(ctx):
+    """Retira ofertas propias de jugadores no disponibles y las que sobrepasan el saldo."""
+    own = [o for o in ctx.offers
+           if o.get("status") == "waiting" and (o.get("from") or {}).get("id") == ctx.user_id]
+    ctx.pending_ids = {pid for o in own for pid in offer_player_ids(o)}
+    scores = {r["id"]: r["score"] for r in ctx.free_market}
+    keep = []
+    for o in own:
+        pids = offer_player_ids(o)
+        pid = pids[0] if pids else None
+        cp = ctx.catalog.get(str(pid)) if pid else None
+        st = ((cp or {}).get("status") or "ok").lower()
+        if st in BAD_STATUS and ctx.can_write():
+            ok, msg = retract_offer(ctx, o.get("id"))
+            print(f"  ↩️ Retiro oferta #{o.get('id')} por {(cp or {}).get('name', pid)} ({st}): {msg}")
             if ok:
-                print(f"    ✅ Puesto en venta a €{used_price:,}")
-                actions.append({"type": "sell_sub", "player_id": cand["id"],
-                                "player_name": cand["name"], "price": used_price})
-                write_count += 1
-                log_action("sell_sub", {"player_id": cand["id"], "player_name": cand["name"],
-                                        "reason": cand["reason"], "price": used_price}, "success")
-            else:
-                print(f"    ❌ {msg}")
-                actions.append({"type": "sell_sub_failed", "player_id": cand["id"], "reason": msg})
-                log_action("sell_sub_failed", {"player_id": cand["id"], "player_name": cand["name"],
-                                               "reason": msg}, "error")
-    else:
-        print(f"  ✅ No hay suplentes que vender (o no hay reemplazos disponibles)")
+                ctx.write_count += 1
+                ctx.pending_ids.discard(pid)
+                ctx.act("offer_retracted", offer_id=o.get("id"), player_id=pid, reason=st)
+                log_action("offer_retracted", {"offer_id": o.get("id"), "player_id": pid, "reason": st}, "success")
+                continue
+        keep.append(o)
 
-    # 2. COMPRAS — buscar talento que mejore a los titulares actuales
-    print(f"\n  2. Compras (free market con posiciones, máx 2):")
-    print(f"    Free market con posiciones: {len(free_market)} jugadores")
-    
-    candidatos = []
-    for r in free_market:
-        if r.get("status") != "ok":
-            continue
-        if r["id"] in pending:
-            continue
-        cp = catalog.get(str(r["id"]))
-        if not cp:
-            continue
-        sc, why = score_player(cp, diff_map.get(cp.get("teamID")))
-        r["score"] = sc
-        r["why"] = why
-        candidatos.append(r)
+    committed = sum(o.get("amount", 0) or 0 for o in keep)
+    limit = ctx.balance - ctx.cushion()
+    if committed > limit:
+        keep.sort(key=lambda o: scores.get((offer_player_ids(o) or [0])[0], 0))
+        while keep and committed > limit and ctx.can_write():
+            o = keep[0]
+            ok, msg = retract_offer(ctx, o.get("id"))
+            if not ok:
+                break
+            keep.pop(0)
+            committed -= o.get("amount", 0) or 0
+            ctx.write_count += 1
+            for pid in offer_player_ids(o):
+                ctx.pending_ids.discard(pid)
+            print(f"  ↩️ Retiro oferta #{o.get('id')}: comprometido por encima del saldo disponible")
+            ctx.act("offer_retracted", offer_id=o.get("id"), reason="over_committed")
+            log_action("offer_retracted", {"offer_id": o.get("id"), "reason": "over_committed"}, "success")
+    ctx.committed = committed
 
-    candidatos.sort(key=lambda x: x["score"], reverse=True)
 
-    print(f"    Mejores del mercado por puntuación:")
-    for r in candidatos[:6]:
-        pos_n = pos_names.get(r.get("position"), "?")
-        print(f"      {r.get('name','?'):22} {pos_n:3} score={r['score']:6.3f} €{r.get('price',0):,}")
-
-    # Umbral del 5% — ESTRATEGIA AGRESIVA
-    titulares_score = {}
-    if opt_detail:
-        for grupo, key in (("gk", "gk"), ("def", "def"), ("mid", "mid"), ("fwd", "fwd")):
-            for e in opt_detail[key]:
-                titulares_score.setdefault(e["position"], []).append(e["score"])
-
-    fichar = []
-    for r in candidatos:
-        pos = r.get("position")
-        scores_pos = titulares_score.get(pos, [])
-        if not scores_pos:
-            continue
-        peor_titular = min(scores_pos)
-        if r["score"] > peor_titular * 1.05 and r.get("price", 0) <= balance:
-            fichar.append({**r, "peor_titular": peor_titular})
-
-    if not fichar:
-        print(f"\n    ✅ Ningún jugador del mercado mejora a nuestros titulares")
-        log_action("buy_check", {"result": "no_upgrade_available",
-                                 "evaluados": len(candidatos)}, "info")
-
-    # Control de saldo con colchón (5-10% del valor del equipo, mínimo ~500k)
-    team_value = sum(catalog.get(str(pid), {}).get("price", 0) for pid in squad_ids if catalog.get(str(pid)))
-    cushion = max(team_value * 0.08, 500000)
-    committed = sum(o.get("amount", 0) for o in offers_data if o.get("from", {}).get("id") == user_id and o.get("status") == "waiting")
-    available = balance - committed - cushion
-    print(f"\n    💰 Saldo: €{balance:,} | Comprometido: €{committed:,} | Colchón: €{cushion:,.0f} | Disponible: €{available:,.0f}")
-
-    for p in fichar[:2]:
-        if write_count >= MAX_WRITES:
-            print("    ⚠️ Límite de escrituras alcanzado")
+def stage_received_offers(ctx):
+    """Acepta/rechaza ofertas recibidas simulando antes la plantilla resultante."""
+    print("\n  0. Ofertas recibidas:")
+    received = [o for o in ctx.offers
+                if o.get("status") == "waiting"
+                and (o.get("to") or {}).get("id") == ctx.user_id
+                and (o.get("from") or {}).get("id") != ctx.user_id]
+    if not received:
+        print("     ✅ No hay ofertas recibidas")
+        return
+    sold = set()
+    for o in received:
+        if not ctx.can_write():
+            print("     ⚠️ Límite de escrituras alcanzado")
             break
-        pid = p.get("id")
-        amount = p.get("price", 0)
-        pname = p.get("name", f"id={pid}")
-        pos = p.get("position", 0)
-        
-        # Pujas dinámicas según competencia estimada
-        # c baja: 1.03-1.05 | c media: 1.08-1.12 | c alta: 1.15-1.25
-        # Estimación: jugador con score alto + titular + valor en subida = alta competencia
-        competition = "baja"
-        if p["score"] > 5.0 and p.get("price", 0) > 3000000:
-            competition = "alta"
-        elif p["score"] > 3.5:
-            competition = "media"
-        
-        if competition == "baja":
-            bid_amount = int(amount * 1.04)
-        elif competition == "media":
-            bid_amount = int(amount * 1.10)
-        else:
-            bid_amount = int(amount * 1.20)
-        
-        # Techo de puja: no pasar del 125% del mercado
-        max_bid = int(amount * 1.25)
-        bid_amount = min(bid_amount, max_bid)
-        
-        print(f"\n    Jugador: {pname} (id={pid}) pos={pos_names.get(pos, '?')} a €{amount:,}")
-        print(f"      score={p['score']} > peor titular {pos_names.get(pos,'?')}={p['peor_titular']}")
-        print(f"      Competencia: {competition} | Puja: €{bid_amount:,} (techo: €{max_bid:,})")
-        
-        if bid_amount > available:
-            print(f"    ⚠️ Puja excede saldo disponible (€{bid_amount:,} > €{available:,}) — omitiendo")
+        oid, amount = o.get("id"), o.get("amount", 0) or 0
+        pids = offer_player_ids(o)
+        otype = (o.get("type") or "purchase").lower()
+        if len(pids) != 1 or otype != "purchase" or o.get("offeredPlayers"):
+            log_action("offer_skipped_complex", {"offer_id": oid, "type": otype, "players": pids}, "info")
+            print(f"     ⏸ Oferta #{oid} compleja (tipo={otype}, jugadores={len(pids)}) — no se toca")
             continue
+        pid = pids[0]
+        if pid in sold:
+            continue
+        cp = ctx.catalog.get(str(pid))
+        if not cp:
+            print(f"     ⚠️ Oferta #{oid}: jugador id={pid} no está en el catálogo")
+            continue
+        name = cp.get("name", f"id={pid}")
+        market_price = cp.get("price", 0) or 0
+        if market_price <= 0:
+            print(f"     ⚠️ Oferta #{oid} por {name}: sin precio de mercado, no se evalúa")
+            continue
+        ratio = amount / market_price
+        st = (cp.get("status") or "ok").lower()
+        injured = st in BAD_STATUS
+        who = "📱 Computer" if abs(ratio - 1) <= 0.05 and (o.get("from") or {}).get("id") is None else "👤 Usuario"
+        print(f"     {who} #{oid} por {name} — €{amount:,} (ratio={ratio*100:.1f}%)")
 
-        ok, offer_id, status = create_purchase_offer(biw, token, league_id, user_id, pid, bid_amount)
+        # Simulación: plantilla sin ese jugador
+        after = [i for i in ctx.squad_ids if i != pid]
+        ids_a, _, detail_a, _ = build_smart_lineup(after, ctx.catalog, ctx.diff_map, ctx.games_map)
+        valid_after = ids_a is not None and len(ids_a) == 11
+        total_b = ctx.opt_detail["total"] if ctx.opt_detail else 0.0
+        total_a = detail_a["total"] if detail_a else 0.0
+        drop = (total_b - total_a) / total_b if total_b > 0 else 0.0
+        entry = ctx.pool.get(pid) or {"score": 0, "position": cp.get("position", 0)}
+        replacement_market = any(
+            r["position"] == entry["position"] and r["status"] == "ok"
+            and r["score"] >= entry["score"] and r["p_start"] >= MIN_P_START_BUY
+            for r in ctx.free_market)
+        has_replacement = (valid_after and drop <= MAX_DROP_PCT) or (valid_after and replacement_market)
+
+        accept, reason = False, ""
+        if not valid_after:
+            reason = "dejaría posiciones sin cubrir"
+        elif ratio >= ACCEPT_HIGH:
+            accept, reason = True, f"oferta ≥ {ACCEPT_HIGH*100:.0f}% del mercado"
+        elif ratio >= ACCEPT_NORMAL and has_replacement:
+            accept, reason = True, f"oferta ≥ {ACCEPT_NORMAL*100:.0f}% y hay reemplazo (caída {drop*100:.1f}%)"
+        elif injured and ratio >= ACCEPT_INJURED:
+            accept, reason = True, f"{st} y oferta ≥ {ACCEPT_INJURED*100:.0f}%"
+        else:
+            reason = f"ratio {ratio*100:.1f}% insuficiente o sin reemplazo"
+
+        if accept:
+            ok, msg = answer_offer(ctx, oid, "accepted")
+            if ok:
+                print(f"       ✅ Aceptada — {reason}")
+                ctx.write_count += 1
+                ctx.act("offer_accepted", offer_id=oid, player_id=pid, player_name=name, amount=amount)
+                log_action("offer_accepted", {"offer_id": oid, "player_id": pid, "player_name": name,
+                                              "amount": amount, "reason": reason}, "success")
+                sold.add(pid)
+                ctx.squad_ids = after
+                ctx.balance += amount
+                ctx.recompute()
+            else:
+                print(f"       ❌ Error aceptando: {msg}")
+                log_action("offer_accept_failed", {"offer_id": oid, "reason": msg}, "error")
+        else:
+            ok, msg = answer_offer(ctx, oid, "rejected")
+            if ok:
+                print(f"       ❌ Rechazada — {reason}")
+                ctx.write_count += 1
+                ctx.act("offer_rejected", offer_id=oid, player_id=pid, player_name=name, amount=amount)
+                log_action("offer_rejected", {"offer_id": oid, "player_id": pid, "player_name": name,
+                                              "amount": amount, "reason": reason}, "success")
+            else:
+                print(f"       ❌ Error rechazando: {msg}")
+                log_action("offer_reject_failed", {"offer_id": oid, "reason": msg}, "error")
+
+
+def stage_sell_bench(ctx):
+    """Vende suplentes lesionados o de score bajo solo si hay mejor reemplazo en el mercado."""
+    print("\n  1. Ventas de suplentes:")
+    starters = set(ctx.opt_ids)
+    sold = 0
+    for e in sorted(ctx.pool.values(), key=lambda x: x["score"]):
+        if e["id"] in starters or e["id"] in ctx.my_sale_ids:
+            continue
+        if sold >= MAX_SELLS or not ctx.can_write():
+            break
+        if len(ctx.squad_ids) - sold <= MIN_SQUAD:
+            print(f"     ⏸ Plantilla mínima ({MIN_SQUAD}) — no se vende más")
+            break
+        st = (e.get("status") or "ok").lower()
+        bad, low = st in BAD_STATUS, e["score"] < SELL_SCORE_MIN
+        if not (bad or low):
+            continue
+        if low and not bad and ctx.match_soon:
+            print(f"     ⏸ {e['name']} (score={e['score']:.3f}) — partido cerca, se mantiene")
+            continue
+        has_repl = any(r["position"] == e["position"] and r["status"] == "ok"
+                       and r["score"] > e["score"] and r["p_start"] >= MIN_P_START_BUY
+                       for r in ctx.free_market)
+        if not has_repl:
+            print(f"     ⏸ {e['name']} ({st}, score={e['score']:.3f}) — sin mejor reemplazo en el mercado")
+            continue
+        price = ctx.catalog.get(str(e["id"]), {}).get("price", 0)
+        reason = f"status={st}" if bad else f"score_bajo={e['score']:.3f}"
+        ok, msg, used = sell_player(ctx, e["id"], max(price, 1))
         if ok:
-            print(f"    ✅ Oferta creada: ID={offer_id}, status={status}")
-            actions.append({"type": "buy_offer_created", "player_id": pid,
-                            "player_name": pname, "amount": bid_amount, "offer_id": offer_id})
-            write_count += 1
-            log_action("buy_offer_created", {"player_id": pid, "player_name": pname,
-                                             "amount": bid_amount, "offer_id": offer_id,
-                                             "score": p["score"],
-                                             "peor_titular": p["peor_titular"],
-                                             "competition": competition}, "success")
-            available -= bid_amount
-            print(f"    ✅ Oferta dejada activa (no se retira) | Disponible restante: €{available:,.0f}")
+            print(f"     ✅ {e['name']} en venta a €{used:,} ({reason})")
+            ctx.write_count += 1
+            sold += 1
+            ctx.my_sale_ids.add(e["id"])
+            ctx.act("sell_sub", player_id=e["id"], player_name=e["name"], price=used)
+            log_action("sell_sub", {"player_id": e["id"], "player_name": e["name"],
+                                    "reason": reason, "price": used}, "success")
         else:
-            print(f"    ❌ No se pudo crear oferta: {status}")
-            log_action("buy_offer_failed", {"player_id": pid, "player_name": pname, "reason": status}, "error")
+            print(f"     ❌ {e['name']}: {msg}")
+            ctx.act("sell_sub_failed", player_id=e["id"], reason=msg)
+            log_action("sell_sub_failed", {"player_id": e["id"], "player_name": e["name"], "reason": msg}, "error")
+    if sold == 0:
+        print("     ✅ Nada que vender ahora")
 
-    # 3. VENTAS DE TITULARES REEMPLAZADOS — solo si ya fueron comprados los reemplazos
-    #    (esto se ejecutará en la próxima corrida, cuando los reemplazos ya estén en el squad)
-    print(f"\n  3. Ventas de titulares reemplazados (próxima corrida):")
-    print(f"    ⏸ Se ejecutarán automáticamente cuando los reemplazos comprados lleguen al squad")
 
-    # 4. Salvaguardia obligatoria: comprobar que la alineación tendrá posiciones completas.
-    # La regla del usuario es clara: una posición libre descuenta puntos. Por eso, nunca
-    # preparamos menos de 11 jugadores ni permitimos que falte GK/DEF/MID/FWD.
-    if opt_all_ids and len(opt_all_ids) >= 11:
-        required_pos = {1: 1, 2: 3, 3: 3, 4: 1}
-        pos_pool = {}
-        for player_id in opt_all_ids:
-            entry = pool.get(player_id)
-            if entry:
-                pos_pool[entry["position"]] = pos_pool.get(entry["position"], 0) + 1
-        posiciones_incompletas = [
-            f"{pos_names.get(p, p)}={pos_pool.get(p, 0)}"
-            for p, needed in required_pos.items() if pos_pool.get(p, 0) < needed
-        ]
-        if posiciones_incompletas:
-            log_action("lineup_blocked", {
-                "reason": "incomplete_positions",
-                "positions": pos_pool,
-                "missing": ", ".join(posiciones_incompletas),
-            }, "warning")
-            print(f"  ⏸ Alineación segura no posible: {', '.join(posiciones_incompletas)}")
-            actions.append({"type": "lineup_blocked", "reason": "incomplete_positions",
-                            "positions": pos_pool})
+def stage_buy(ctx):
+    """Pujas dinámicas por jugadores del mercado libre que mejoren a los titulares."""
+    print("\n  2. Compras:")
+    if ctx.balance < 0:
+        print("     🚨 Saldo negativo: no se compra (el saldo negativo resta puntos)")
+        log_action("balance_negative", {"balance": ctx.balance}, "warning")
+        return
+    if MAX_SQUAD and len(ctx.squad_ids) >= MAX_SQUAD:
+        print(f"     ⏸ Plantilla completa ({MAX_SQUAD})")
+        return
+
+    worst = {}
+    if ctx.opt_detail:
+        for key in ("gk", "def", "mid", "fwd"):
+            for e in ctx.opt_detail[key]:
+                worst[e["position"]] = min(worst.get(e["position"], 99), e["score"])
+
+    cands = [r for r in ctx.free_market if r["status"] == "ok" and r["id"] not in ctx.pending_ids
+             and r["id"] not in ctx.squad_ids and r["p_start"] >= MIN_P_START_BUY]
+    cands.sort(key=lambda r: r["score"], reverse=True)
+    print(f"     Mercado libre evaluado: {len(ctx.free_market)} · candidatos: {len(cands)}")
+    for r in cands[:5]:
+        print(f"       {r['name']:22} {POS_NAMES.get(r['position'], '?'):3} score={r['score']:6.3f} €{r['price']:,}")
+
+    upgrades = []
+    for r in cands:
+        w = worst.get(r["position"])
+        if w is None:
+            continue
+        if r["score"] > w * (1 + BUY_MARGIN) and r["price"] <= ctx.balance:
+            upgrades.append({**r, "peor_titular": w, "gain": r["score"] - w})
+    upgrades.sort(key=lambda r: r["gain"], reverse=True)
+    if not upgrades:
+        print("     ✅ Ningún jugador del mercado mejora a los titulares")
+        log_action("buy_check", {"result": "no_upgrade_available", "evaluados": len(cands)}, "info")
+        return
+
+    available = ctx.balance - ctx.committed - ctx.cushion()
+    print(f"     💰 Saldo €{ctx.balance:,} · comprometido €{ctx.committed:,} · "
+          f"colchón €{ctx.cushion():,.0f} · disponible €{available:,.0f}")
+
+    bought, bought_pos = 0, set()
+    for p in upgrades:
+        if bought >= MAX_BUYS or not ctx.can_write():
+            break
+        if p["position"] in bought_pos:
+            continue
+        pid, price = p["id"], p["price"]
+        trend = (ctx.catalog.get(str(pid)) or {}).get("priceIncrement") or 0
+        if p["score"] > 5.0 and price > 3_000_000:
+            competition = "alta"
+        elif p["score"] > 3.5 or (trend > 0 and p["score"] > 3.0):
+            competition = "media"
         else:
-            print(f"  ✅ Comprobación de posiciones completas: {pos_pool}")
-    elif opt_all_ids:
-        print(f"  ⏸ Alineación segura no posible: solo {len(opt_all_ids)} jugadores disponibles")
-        actions.append({"type": "lineup_blocked", "reason": "insufficient_players",
-                        "count": len(opt_all_ids)})
-        log_action("lineup_blocked", {"reason": "insufficient_players",
-                                      "count": len(opt_all_ids)}, "warning")
-    else:
-        print("  ⏸ Alineación segura no posible: no hay combinación válida disponible")
-        actions.append({"type": "lineup_blocked", "reason": "no_valid_lineup"})
-        log_action("lineup_blocked", {"reason": "no_valid_lineup"}, "warning")
+            competition = "baja"
+        mult = {"baja": BID_LOW, "media": BID_MID, "alta": BID_HIGH}[competition]
+        max_bid = int(price * MAX_BID_PCT)
+        bid = min(int(price * mult), max_bid)
+        if BID_PLUS_ONE:
+            bid = min(bid + 1, max_bid + 1)
+        print(f"     → {p['name']} ({POS_NAMES.get(p['position'], '?')}) mercado €{price:,} · "
+              f"score {p['score']} vs peor titular {p['peor_titular']:.3f} · "
+              f"competencia {competition} · puja €{bid:,}")
+        if bid > available:
+            print(f"       ⚠️ Excede el saldo disponible — se omite")
+            continue
+        ok, offer_id, status = create_purchase_offer(ctx, pid, bid)
+        if ok:
+            print(f"       ✅ Oferta creada ID={offer_id} ({status})")
+            ctx.write_count += 1
+            bought += 1
+            bought_pos.add(p["position"])
+            available -= bid
+            ctx.committed += bid
+            ctx.pending_ids.add(pid)
+            ctx.act("buy_offer_created", player_id=pid, player_name=p["name"], amount=bid, offer_id=offer_id)
+            log_action("buy_offer_created", {"player_id": pid, "player_name": p["name"], "amount": bid,
+                                             "offer_id": offer_id, "score": p["score"],
+                                             "peor_titular": p["peor_titular"], "competition": competition},
+                       "success")
+        else:
+            print(f"       ❌ {status}")
+            ctx.act("buy_failed", player_id=pid, reason=status)
+            log_action("buy_offer_failed", {"player_id": pid, "player_name": p["name"], "reason": status}, "error")
 
-    # 5. Alineación — solo cambiar si la mejora es significativa (evita ruido)
-    print(f"\n  Alineación:")
-    MIN_LINEUP_GAIN = 0.05  # 5% de mejora mínima sobre la alineación actual
-    current_total = 0.0
-    for e in pool.values():
-        if e["id"] in lineup_ids_list:
-            current_total += e["score"]
-    current_total = round(current_total, 3)
-    best_total = opt_detail["total"] if opt_detail else 0.0
+
+def lineup_is_complete(ctx):
+    """Salvaguardia: 11 jugadores con 1 GK, ≥3 DEF, ≥3 MID, ≥1 FWD."""
+    if len(ctx.opt_ids) < 11:
+        return False, f"solo {len(ctx.opt_ids)} jugadores"
+    need = {1: 1, 2: 3, 3: 3, 4: 1}
+    count = {}
+    for pid in ctx.opt_ids:
+        e = ctx.pool.get(pid)
+        if e:
+            count[e["position"]] = count.get(e["position"], 0) + 1
+    missing = [f"{POS_NAMES[p]}={count.get(p, 0)}" for p, n in need.items() if count.get(p, 0) < n]
+    return (not missing), ", ".join(missing)
+
+
+def stage_lineup(ctx):
+    print("\n  3. Alineación:")
+    ok_lineup, why = lineup_is_complete(ctx)
+    if not ok_lineup:
+        print(f"     🔒 Alineación bloqueada: {why}")
+        ctx.act("lineup_blocked", reason=why)
+        log_action("lineup_blocked", {"reason": why}, "warning")
+        return
+
+    if CAPTAIN_KEY or STRIKER_KEY:
+        ctx.captain_id, ctx.striker_id = choose_captain_and_striker(ctx.opt_detail)
+        nm = lambda i: (ctx.pool.get(i) or {}).get("name", i)
+        print(f"     Capitán: {nm(ctx.captain_id)} · Ariete: {nm(ctx.striker_id)}")
+
+    current_total = round(sum(e["score"] for e in ctx.pool.values() if e["id"] in ctx.lineup_ids), 3)
+    best_total = ctx.opt_detail["total"]
     gain = best_total - current_total
     gain_pct = (gain / current_total * 100) if current_total > 0 else 100.0
+    unavailable = [i for i in ctx.lineup_ids
+                   if i not in ctx.pool or (ctx.pool[i]["status"] or "ok").lower() in BAD_STATUS]
+    same = ctx.opt_ids == ctx.lineup_ids
+    extras = bool(CAPTAIN_KEY or STRIKER_KEY)
 
-    if opt_all_ids and opt_all_ids != lineup_ids_list:
-        if gain_pct >= MIN_LINEUP_GAIN * 100:
-            print(f"    Mejora: {current_total} → {best_total} (+{gain:.3f}, {gain_pct:+.1f}%)")
-            print(f"    Cambiando a {opt_type}: {opt_all_ids}")
-            ok, resp = set_lineup(biw, token, league_id, user_id, opt_all_ids, opt_type)
-            if ok:
-                print(f"    ✅ Alineación actualizada a {opt_type}")
-                actions.append({"type": "lineup_set", "formation": opt_type,
-                                "players": opt_all_ids, "response": resp})
-                write_count += 1
-                log_action("lineup_set", {"formation": opt_type, "total": best_total,
-                                          "gain_pct": round(gain_pct, 2),
-                                          "players": opt_all_ids}, "success")
-            else:
-                print(f"    ❌ Error alineación: {resp}")
-                actions.append({"type": "lineup_failed", "reason": resp})
-                log_action("lineup_failed", {"reason": resp, "formation": opt_type}, "error")
-        else:
-            print(f"    ⏸ Mejora insuficiente ({gain_pct:+.1f}% < {MIN_LINEUP_GAIN*100}%) — se mantiene {lineup_type}")
-            actions.append({"type": "lineup_skipped", "reason": "gain_below_threshold",
-                            "gain_pct": round(gain_pct, 2)})
-            log_action("lineup_skipped", {"reason": "gain_below_threshold",
-                                          "gain_pct": round(gain_pct, 2),
-                                          "current": current_total, "best": best_total}, "info")
-    elif opt_all_ids:
-        print(f"    ⏸ Sin cambios (alineación ya óptima: {opt_type}, total={best_total})")
-        actions.append({"type": "lineup_skipped", "reason": "already_optimal"})
-        log_action("lineup_skipped", {"reason": "already_optimal", "total": best_total}, "info")
+    if not same and (gain_pct >= MIN_LINEUP_GAIN * 100 or unavailable):
+        why_set = "titular no disponible" if unavailable and gain_pct < MIN_LINEUP_GAIN * 100 else f"{gain_pct:+.1f}%"
+        print(f"     Mejora {current_total} → {best_total} ({why_set}). Cambiando a {ctx.opt_type}")
+    elif extras and ctx.captain_id:
+        print("     Alineación igual de buena; se reenvía para fijar capitán/ariete")
     else:
-        print(f"    ⚠️ No se puede alinear (sin porteros)")
-        actions.append({"type": "lineup_blocked", "reason": "no_goalkeepers"})
-        log_action("lineup_blocked", {"reason": "no_goalkeepers"}, "warning")
+        reason = "already_optimal" if same else "gain_below_threshold"
+        print(f"     ⏸ Sin cambios ({reason}, {gain_pct:+.1f}%)")
+        ctx.act("lineup_skipped", reason=reason, gain_pct=round(gain_pct, 2))
+        log_action("lineup_skipped", {"reason": reason, "gain_pct": round(gain_pct, 2),
+                                      "current": current_total, "best": best_total}, "info")
+        return
 
-    # ── Guardar state ──────────────────────────────────
+    if not ctx.can_write():
+        print("     ⚠️ Límite de escrituras alcanzado — la alineación NO se cambió")
+        log_action("lineup_not_set_write_limit", {"writes": ctx.write_count}, "warning")
+        return
+    ok, resp = set_lineup(ctx, ctx.opt_ids, ctx.opt_type, ctx.captain_id, ctx.striker_id)
+    if ok:
+        print(f"     ✅ Alineación actualizada a {ctx.opt_type}")
+        ctx.write_count += 1
+        ctx.act("lineup_set", formation=ctx.opt_type, players=ctx.opt_ids,
+                captain=ctx.captain_id, striker=ctx.striker_id)
+        log_action("lineup_set", {"formation": ctx.opt_type, "total": best_total, "gain_pct": round(gain_pct, 2),
+                                  "players": ctx.opt_ids, "captain": ctx.captain_id,
+                                  "striker": ctx.striker_id}, "success")
+    else:
+        print(f"     ❌ Error alineación: {resp}")
+        ctx.act("lineup_failed", reason=str(resp))
+        log_action("lineup_failed", {"reason": str(resp), "formation": ctx.opt_type}, "error")
+
+
+# ──────────────────────────────────────────────────────────
+# Probe, state y todo
+# ──────────────────────────────────────────────────────────
+
+def probe(ctx):
+    """Vuelca los campos reales de lineup para descubrir cómo guarda Biwenger capitán/ariete."""
+    r = api("GET", "https://biwenger.as.com/api/v2/user?fields=*,lineup(*)",
+            ctx.token, ctx.league_id, ctx.user_id)
+    if r is None or r.status_code != 200:
+        print(f"❌ Probe falló: {None if r is None else r.status_code}")
+        return
+    data = r.json().get("data", {})
+    lineup = data.get("lineup") or {}
+    with open(PROBE_FILE, "w", encoding="utf-8") as f:
+        json.dump({"user_keys": sorted(data.keys()), "lineup": lineup}, f, indent=2, ensure_ascii=False)
+    print(f"Claves de user:   {sorted(data.keys())}")
+    print(f"Claves de lineup: {sorted(lineup.keys())}")
+    print(f"Volcado completo en {PROBE_FILE}")
+    print("Busca ahí el campo del capitán/ariete y ponlo en BIWENGER_CAPTAIN_KEY / BIWENGER_STRIKER_KEY.")
+
+
+def save_outputs(ctx, now):
     state = {
         "date": now.isoformat(),
-        "points": points,
-        "position": 0,
-        "balance": balance,
-        "league_id": league_id,
-        "user_id": user_id,
-        "formation": opt_type or lineup_type,
-        "current_lineup_ids": list(lineup_ids_list),
-        "optimal_lineup_ids": opt_all_ids,
-        "lineup_scores": {e["name"]: e["score"] for e in pool.values()} if pool else {},
-        "lineup_total": opt_detail["total"] if opt_detail else None,
-        "round": round_name,
-        "actions": actions,
-        "peticiones_usadas": 0,
-        "limite_peticiones": 10,
+        "dry_run": DRY_RUN,
+        "points": ctx.points,
+        "balance": ctx.balance,
+        "league_id": ctx.league_id,
+        "user_id": ctx.user_id,
+        "formation": ctx.opt_type,
+        "current_lineup_ids": list(ctx.lineup_ids),
+        "optimal_lineup_ids": ctx.opt_ids,
+        "lineup_scores": {e["name"]: e["score"] for e in ctx.pool.values()},
+        "lineup_total": ctx.opt_detail["total"] if ctx.opt_detail else None,
+        "captain": ctx.captain_id,
+        "striker": ctx.striker_id,
+        "round": ctx.round_name,
+        "next_kickoff": ctx.next_kickoff.isoformat() if ctx.next_kickoff else None,
+        "hours_to_kickoff": ctx.hours_to_kickoff,
+        "match_soon": ctx.match_soon,
+        "rate_limited": ctx.rate_limited,
+        "peticiones_usadas": REQ["count"],
+        "writes": ctx.write_count,
+        "actions": ctx.actions,
     }
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f, indent=2, ensure_ascii=False)
-    print(f"\n  ✅ State: {STATE_FILE}")
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=2, ensure_ascii=False, default=str)
 
-    # ── Guardar todo ───────────────────────────────────
     todo = [
-        f"# Biwenger Auto-Trader v8 — Brayan Lopez",
-        f"**Liga:** {league_id}",
-        f"**Usuario:** {user_name} (ID: {user_id}) | **Balance:** €{balance:,}",
-        f"**Puntos:** {points} | **Ejecución:** {now}",
-        "",
-        "## Acciones",
+        "# Biwenger Auto-Trader v10",
+        f"**Liga:** {ctx.league_id} · **Usuario:** {ctx.user_name} (ID {ctx.user_id}) · **Saldo:** €{ctx.balance:,}",
+        f"**Puntos:** {ctx.points} · **Ejecución:** {now:%Y-%m-%d %H:%M}" + (" · DRY-RUN" if DRY_RUN else ""),
+        "", "## Acciones",
     ]
-    for a in actions:
-        t = a["type"]
-        if t == "sell":
-            todo.append(f"✅ Vendido {a['player_name']} (€{a['price']:,})")
-        elif t == "sell_failed":
-            todo.append(f"❌ Venta fallida: {a['reason']}")
-        elif t == "buy_offer_created":
-            todo.append(f"🔵 Oferta compra {a['player_name']} (€{a['amount']:,}) — ID:{a['offer_id']}")
-        elif t == "buy_offer_increased":
-            todo.append(f"🔵 Puja aumentada a €{a['new_amount']:,}")
-        elif t == "buy_offer_retracted":
-            todo.append(f"🔵 Oferta retirada")
-        elif t == "buy_failed":
-            todo.append(f"❌ Compra fallida: {a['reason']}")
-        elif t == "lineup_set":
-            todo.append(f"✅ Alineación: {a['formation']} — {len(a['players'])} jugadores")
-        elif t == "lineup_failed":
-            todo.append(f"❌ Alineación fallida: {a['reason']}")
-        elif t == "lineup_skipped":
-            r = a.get("reason")
-            if r == "already_optimal":
-                todo.append(f"⏸ Alineación sin cambios (ya óptima)")
-            elif r == "gain_below_threshold":
-                todo.append(f"⏸ Alineación sin cambios (mejora {a.get('gain_pct', 0):+.1f}% < 5%)")
-            else:
-                todo.append(f"⏸ Alineación sin cambios")
-        elif t == "lineup_blocked":
-            todo.append(f"🔒 Alineación bloqueada: {a['reason']}")
-        elif t == "sell_skipped":
-            todo.append(f"⏸ Venta descartada: {a.get('reason')}")
-    with open(TODO_FILE, "w") as f:
+    labels = {
+        "offer_accepted": "✅ Oferta aceptada: {player_name} (€{amount:,})",
+        "offer_rejected": "❌ Oferta rechazada: {player_name} (€{amount:,})",
+        "offer_retracted": "↩️ Oferta propia retirada #{offer_id}",
+        "sell_sub": "✅ En venta: {player_name} (€{price:,})",
+        "buy_offer_created": "🔵 Puja por {player_name}: €{amount:,}",
+        "lineup_set": "✅ Alineación: {formation}",
+        "lineup_blocked": "🔒 Alineación bloqueada: {reason}",
+        "lineup_skipped": "⏸ Alineación sin cambios ({reason})",
+    }
+    for a in ctx.actions:
+        tpl = labels.get(a["type"])
+        try:
+            todo.append(tpl.format(**a) if tpl else f"• {a['type']}: {a}")
+        except (KeyError, ValueError):
+            todo.append(f"• {a['type']}")
+    if not ctx.actions:
+        todo.append("(sin acciones)")
+    with open(TODO_FILE, "w", encoding="utf-8") as f:
         f.write("\n".join(todo) + "\n")
-    print(f"  ✅ Todo: {TODO_FILE}")
 
-    print(f"\n{'='*60}")
-    print(f"✅ Ejecución completada — {len(actions)} acciones, {write_count} writes")
-    print(f"{'='*60}")
+
+# ──────────────────────────────────────────────────────────
+# Ejecución
+# ──────────────────────────────────────────────────────────
+
+def run(probe_only=False):
+    now = datetime.now()
+    print(f"\n{'=' * 60}\nBiwenger Auto-Trader v10 — {now:%Y-%m-%d %H:%M}"
+          + (" [DRY-RUN]" if DRY_RUN else "") + f"\n{'=' * 60}")
+
+    until = rate_limit_active()
+    if until:
+        print(f"⏸ Rate limit activo hasta {until:%Y-%m-%d %H:%M}. No se hace nada.")
+        return 6
+    if START_JITTER_MAX > 0:
+        time.sleep(random.uniform(0, START_JITTER_MAX))
+
+    ctx = Ctx()
+    try:
+        ctx.token = TOKEN or login()
+        print("✅ Autenticado")
+        (ctx.league_id, ctx.user_id, ctx.balance, ctx.points, ctx.user_name) = get_account(ctx.token)
+        print(f"\n--- Account ---\n  {ctx.user_name} | {ctx.points} pts | €{ctx.balance:,} | liga {ctx.league_id}")
+
+        if probe_only:
+            probe(ctx)
+            return 0
+
+        # Datos
+        squad_ids, lineup_info, lineup_players = get_squad(ctx)
+        if lineup_info is None:
+            print("❌ No se pudo obtener la plantilla")
+            return 1
+        ctx.squad_ids, ctx.lineup_info = squad_ids, lineup_info
+        ctx.lineup_ids = lineup_info.get("playersID") or []
+        print(f"  Plantilla: {len(ctx.squad_ids)} jugadores · formación actual {lineup_info.get('type', '?')}")
+
+        ctx.catalog, cat_teams = get_catalog(ctx)
+        print(f"  Catálogo: {len(ctx.catalog)} jugadores · {len(cat_teams)} equipos")
+        if not ctx.catalog:
+            print("❌ Sin catálogo: no se actúa")
+            log_action("no_catalog", {}, "error")
+            return 1
+
+        ctx.diff_map, ctx.games_map, ctx.round_name, kickoffs = get_fixture_info(lineup_players)
+        ctx.round_name = ctx.round_name or get_round_name(ctx)
+        future = [d for d in kickoffs.values() if d >= now - timedelta(hours=3)]
+        if future:
+            ctx.next_kickoff = min(future)
+            ctx.hours_to_kickoff = round((ctx.next_kickoff - now).total_seconds() / 3600, 1)
+            ctx.match_soon = ctx.hours_to_kickoff <= MATCH_SOON_HOURS
+            print(f"  Próximo partido: {ctx.next_kickoff:%a %d/%m %H:%M} (en {ctx.hours_to_kickoff} h) "
+                  f"· {ctx.round_name or ''}")
+        else:
+            ctx.match_soon = True  # sin fechas: conservador
+            print("  ⚠️ Sin fechas de partidos: se asume partido cercano (no se vende por score bajo)")
+            log_action("no_kickoff_dates", {}, "warning")
+        print(f"  Dificultad conocida para {len(ctx.diff_map)} equipos")
+
+        ctx.offers = get_offers(ctx)
+        free_sales, own_sales = get_market(ctx)
+        ctx.my_sale_ids = {(s.get("player") or {}).get("id") for s in own_sales}
+        ctx.free_market = build_free_market(ctx, free_sales)
+        print(f"  Mercado: {len(free_sales)} libres · {len(own_sales)} propias · "
+              f"{len(ctx.offers)} ofertas en total")
+
+        ctx.recompute()
+        if not ctx.opt_ids:
+            print("⚠️ No hay combinación válida de alineación (¿sin porteros?)")
+            log_action("lineup_eval", {"result": "no_valid_lineup"}, "warning")
+        else:
+            print(f"\n--- Plantilla puntuada ({len(ctx.pool)}) ---")
+            for e in sorted(ctx.pool.values(), key=lambda x: x["score"], reverse=True):
+                gm = ctx.games_map.get(e["team_id"], {})
+                print(f"  {e['name']:20} {POS_NAMES.get(e['position'], '?'):3} score={e['score']:6.3f} "
+                      f"vs {gm.get('rival', '?')} ({gm.get('cond', '?')}) · {e['why']}")
+            print(f"\n  Mejor alineación: {ctx.opt_type} (total={ctx.opt_detail['total']})")
+            log_action("lineup_eval", {"formation": ctx.opt_type, "total": ctx.opt_detail["total"]}, "info")
+
+        # Acciones
+        print("\n--- Acciones ---")
+        stage_cleanup_offers(ctx)
+        stage_received_offers(ctx)
+        ctx.recompute()
+        stage_sell_bench(ctx)
+        stage_buy(ctx)
+        stage_lineup(ctx)
+
+    except RateLimited as e:
+        ctx.rate_limited = True
+        until = set_rate_limit()
+        print(f"\n🚫 429 (rate limit) en {e}. Pausa hasta {until:%Y-%m-%d %H:%M}")
+        log_action("rate_limited", {"until": until.isoformat()}, "error")
+        save_outputs(ctx, now)
+        return 6
+    except OldVersion:
+        print("\n❌ 'Old version': sube BIWENGER_VERSION (DevTools → Network → cabecera x-version)")
+        log_action("old_version", {"x_version": APP_VERSION}, "error")
+        return 5
+    except AuthError:
+        print("\n❌ 401: token o credenciales inválidos")
+        log_action("auth_error", {}, "error")
+        return 3
+
+    save_outputs(ctx, now)
+    print(f"\n  ✅ State: {STATE_FILE}\n  ✅ Todo:  {TODO_FILE}")
+    print(f"\n{'=' * 60}\n✅ Ejecución completada — {len(ctx.actions)} acciones, "
+          f"{ctx.write_count} writes, {REQ['count']} peticiones\n{'=' * 60}")
+    return 0
 
 
 if __name__ == "__main__":
+    if "--dry-run" in sys.argv:
+        DRY_RUN = True
     try:
-        run()
-    except Exception as e:
+        sys.exit(run(probe_only="--probe" in sys.argv))
+    except ValueError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:  # noqa: BLE001
         print(f"ERROR FATAL: {e}", file=sys.stderr)
         import traceback
         traceback.print_exc()
         sys.exit(1)
+
+
+# CHANGELOG v9 → v10
+# - FIX: NameError `threshold` al rechazar ofertas (cortaba la ejecución).
+# - FIX: `offers_data` sin definir en el control de saldo → ofertas leídas una sola vez (1 petición menos).
+# - FIX: p_start y localía ahora se calculan y se aplican (antes siempre 1.0 / neutro).
+# - FIX: la dificultad del rival se leía del ÚLTIMO partido de nextGames; ahora del PRÓXIMO.
+# - FIX: "partido cerca" siempre era verdadero; ahora usa fechas reales (respaldo conservador sin fechas).
+# - FIX: has_replacement usaba un score inexistente; el mercado libre se puntúa antes de evaluar ofertas.
+# - FIX: la alineación se aplicaba aunque faltaran posiciones; ahora se bloquea de verdad.
+# - FIX: ofertas recibidas de otros usuarios (from.id ≠ null) se ignoraban; ahora se leen todas las dirigidas a ti.
+# - MEJORA: simulación de plantilla antes de aceptar una oferta; retirada de ofertas obsoletas o sobre-comprometidas.
+# - MEJORA: X-Version y todos los umbrales por variables de entorno; .env integrado; --dry-run y --probe.
+# - MEJORA: manejo central de 429 (pausa de 4 h con fichero), 401 y "Old version".
+# - MEJORA: un máximo de 1 compra por posición y ejecución; pujas +1 € contra empates; log con rotación.

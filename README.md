@@ -2,17 +2,19 @@
 
 Automatización del juego Biwenger vía API — login, ventas, compras, alineación automática y cron scheduler.
 
-## Características
+## Características (v10)
 
 - **Login automático** con token Bearer
 - **Optimización de alineación** con 7 formaciones (4-4-2, 4-3-3, 3-4-3, 3-5-2, 5-3-2, 4-5-1, 5-4-1)
-- **Scorer mejorado** con probabilidad de titularidad, localía y dificultad de rival
+- **Scorer mejorado** con probabilidad de titularidad (p_start), localía y dificultad de rival
 - **Compras con pujas dinámicas** según competencia estimada
-- **Ofertas recibidas** con reglas inteligentes (110%, 125%, lesiones)
-- **Ventas de suplentes** con validación de reemplazo
+- **Ofertas recibidas** con reglas inteligentes (110%, 125%, lesiones) y simulación de plantilla
+- **Ventas de suplentes** con validación de reemplazo y fecha de partido
 - **Control de saldo** con colchón de seguridad
+- **Capitán y ariete** (activar con variables de entorno)
 - **Logs completos** en JSON y texto
 - **Cron scheduler** para ejecución automática
+- **Modo --dry-run** (simula sin escribir) y **--probe** (descubre campos de la API)
 
 ## Instalación
 
@@ -36,11 +38,14 @@ cp .env.example .env
 ## Uso
 
 ```bash
-# Ejecutar manualmente
+# Ejecutar normalmente
 python3 biwenger_daily.py
 
-# O con variables de entorno
-BIWENGER_EMAIL=xxx BIWENGER_PASSWORD=yyy python3 biwenger_daily.py
+# Simular sin escribir
+python3 biwenger_daily.py --dry-run
+
+# Descubrir campos de la API (capitán/ariete)
+python3 biwenger_daily.py --probe
 ```
 
 ## Configuración de Cron
@@ -49,6 +54,22 @@ BIWENGER_EMAIL=xxx BIWENGER_PASSWORD=yyy python3 biwenger_daily.py
 # Ejecutar dos veces al día (9 AM y 9 PM)
 0 9,21 * * * cd /opt/data/biwenger-automation && source .venv/bin/activate && python3 biwenger_daily.py
 ```
+
+## Variables de entorno
+
+| Variable | Descripción | Default |
+|----------|-------------|---------|
+| `BIWENGER_EMAIL` | Email de la cuenta | (requerido) |
+| `BIWENGER_PASSWORD` | Contraseña | (requerido) |
+| `BIWENGER_LEAGUE_ID` | ID de la liga | 0 (auto) |
+| `BIWENGER_USER_ID` | ID del usuario | 0 (auto) |
+| `BIWENGER_VERSION` | Versión de la API | 631 |
+| `BIWENGER_CAPTAIN_KEY` | Campo del capitán | (vacío) |
+| `BIWENGER_STRIKER_KEY` | Campo del ariete | (vacío) |
+| `BIWENGER_DRY_RUN` | Modo simulación | false |
+| `BIWENGER_MAX_WRITES` | Máx. escrituras por corrida | 8 |
+| `BIWENGER_BUY_MARGIN` | Margen de compra | 0.05 |
+| `BIWENGER_CUSHION_PCT` | Colchón de saldo | 0.08 |
 
 ## Estructura
 
@@ -65,6 +86,7 @@ biwenger-automation/
 - **NO** subas tus credenciales al repositorio
 - El script respeta los límites de la API (429 rate limit)
 - Las credenciales se leen de variables de entorno o archivo `.env`
+- El modo `--dry-run` es seguro: no escribe nada
 
 ## Licencia
 
