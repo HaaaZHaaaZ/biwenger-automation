@@ -35,8 +35,8 @@ LOG_TXT_FILE = "/opt/data/biwenger_log.txt"
 MAX_RETRIES = 1
 RETRY_DELAY = 120
 REQUEST_TIMEOUT = 30
-LEAGUE_ID = 1802805
-USER_ID = 13947894
+LEAGUE_ID = int(os.environ.get("BIWENGER_LEAGUE_ID", "0"))
+USER_ID = int(os.environ.get("BIWENGER_USER_ID", "0"))
 MAX_WRITES = 8
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36"
@@ -670,7 +670,7 @@ def run():
         league_id, user_id, balance, points, user_name = get_account(biw, token)
         biw.headers.update({"X-League": str(league_id), "X-User": str(user_id), "X-Version": "631"})
         print(f"  {user_name} | {points}pts | €{balance:,}")
-        print(f"  Liga: DATA CENTER GRUPO B (ID: {league_id})")
+        print(f"  Liga: {league_id}")
     except Exception as e:
         print(f"  ❌ Account error: {e}")
         sys.exit(1)
@@ -1165,7 +1165,7 @@ def run():
     # ── Guardar todo ───────────────────────────────────
     todo = [
         f"# Biwenger Auto-Trader v8 — Brayan Lopez",
-        f"**Liga:** DATA CENTER GRUPO B (ID: {league_id})",
+        f"**Liga:** {league_id}",
         f"**Usuario:** {user_name} (ID: {user_id}) | **Balance:** €{balance:,}",
         f"**Puntos:** {points} | **Ejecución:** {now}",
         "",
