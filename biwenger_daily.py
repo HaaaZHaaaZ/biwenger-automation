@@ -120,9 +120,13 @@ MAX_LOG_ENTRIES = env_int("BIWENGER_MAX_LOG_ENTRIES", 1500)
 # Límites de actividad
 MAX_WRITES = env_int("BIWENGER_MAX_WRITES", 8)
 MAX_BUYS = env_int("BIWENGER_MAX_BUYS", 2)
-MAX_SELLS = env_int("BIWENGER_MAX_SELLS", 2)
+MAX_SELLS = env_int("BIWENGER_MAX_SELLS", 4)
 MIN_SQUAD = env_int("BIWENGER_MIN_SQUAD", 12)      # nunca bajar de esta plantilla por ventas
 MAX_SQUAD = env_int("BIWENGER_MAX_SQUAD", 0)       # 0 = sin comprobar tope de plantilla
+# Opción B: con la alineación ya cerrada y el partido cerca, SÍ se puede vender
+# suplentes de score bajo. La restricción de 48h solo aplica si la alineación
+# no está completa (riesgo real de quedarse con menos de 11).
+SELL_BENCH_WHEN_LINEUP_READY = env_bool("BIWENGER_SELL_BENCH_LINEUP_READY", True)
 DRY_RUN = env_bool("BIWENGER_DRY_RUN", False)
 
 # Alineación / scorer
@@ -909,8 +913,15 @@ def stage_sell_bench(ctx):
         if not (bad or low):
             continue
         if low and not bad and ctx.match_soon:
-            print(f"     ⏸ {e['name']} (score={e['score']:.3f}) — partido cerca, se mantiene")
-            continue
+            # Opción B: si la alineación ya está cerrada (11 titulares listos),
+            # los suplentes no aportan puntos y no hay riesgo de quedarse corto.
+            lineup_ready = len(ctx.opt_ids) >= 11
+            if lineup_ready and SELL_BENCH_WHEN_LINEUP_READY:
+                print(f"     🔓 {e['name']} (score={e['score']:.3f}) — alineación cerrada, se vende")
+            else:
+                print(f"     ⏸ {e['name']} (score={e['score']:.3f}) — partido cerca y alineación "
+                      f"sin cerrar ({len(ctx.opt_ids)}/11), se mantiene")
+                continue
         has_repl = any(r["position"] == e["position"] and r["status"] == "ok"
                        and r["score"] > e["score"] and r["p_start"] >= MIN_P_START_BUY
                        for r in ctx.free_market)
