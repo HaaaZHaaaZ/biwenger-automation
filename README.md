@@ -1,4 +1,4 @@
-# ⚽ Biwenger Auto-Trader v10
+# ⚽ Biwenger Auto-Trader v11
 
 > Automatización inteligente del juego Biwenger vía API REST — login, mercado, alineación, ofertas y más.
 

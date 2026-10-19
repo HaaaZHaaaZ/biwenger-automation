@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Biwenger Auto-Trader v10
+Biwenger Auto-Trader v11
 ========================
-Cambios respecto a v9 (ver CHANGELOG al final del fichero):
+Cambios respecto a v10 (ver CHANGELOG al final del fichero):
   - Corregidos los fallos que cortaban la ejecución (threshold / offers_data).
   - p_start y localía se usan de verdad en el scorer.
   - Dificultad del rival: solo el PRÓXIMO partido de cada equipo.
@@ -1151,7 +1151,7 @@ def save_outputs(ctx, now):
         json.dump(state, f, indent=2, ensure_ascii=False, default=str)
 
     todo = [
-        "# Biwenger Auto-Trader v10",
+        "# Biwenger Auto-Trader v11",
         f"**Liga:** {ctx.league_id} · **Usuario:** {ctx.user_name} (ID {ctx.user_id}) · **Saldo:** €{ctx.balance:,}",
         f"**Puntos:** {ctx.points} · **Ejecución:** {now:%Y-%m-%d %H:%M}" + (" · DRY-RUN" if DRY_RUN else ""),
         "", "## Acciones",
@@ -1184,7 +1184,7 @@ def save_outputs(ctx, now):
 
 def run(probe_only=False):
     now = datetime.now()
-    print(f"\n{'=' * 60}\nBiwenger Auto-Trader v10 — {now:%Y-%m-%d %H:%M}"
+    print(f"\n{'=' * 60}\nBiwenger Auto-Trader v11 — {now:%Y-%m-%d %H:%M}"
           + (" [DRY-RUN]" if DRY_RUN else "") + f"\n{'=' * 60}")
 
     until = rate_limit_active()
@@ -1302,6 +1302,12 @@ if __name__ == "__main__":
         traceback.print_exc()
         sys.exit(1)
 
+
+# CHANGELOG v10 → v11
+# - MEJORA: README completamente renovado con documentación completa.
+# - MEJORA: Variables de entorno documentadas en tablas con valores por defecto.
+# - MEJORA: Sección de seguridad y estructura del proyecto en README.
+# - FIX: Sincronización de script local con repo GitHub.
 
 # CHANGELOG v9 → v10
 # - FIX: NameError `threshold` al rechazar ofertas (cortaba la ejecución).
