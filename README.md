@@ -1,4 +1,4 @@
-# ⚽ Biwenger Auto-Trader v11
+# ⚽ Biwenger Auto-Trader v12
 
 > Automatización inteligente del juego Biwenger vía API REST — login, mercado, alineación, ofertas y más.
 
@@ -16,7 +16,7 @@
 | **Alineación** | 7 formaciones evaluadas, scorer con p_start, localía, dificultad del rival |
 | **Free Market** | Pujas dinámicas según competencia estimada (baja/media/alta) |
 | **Ventas** | Venta automática de suplentes con score < 2.0 o lesionados, previa validación de reemplazo |
-| **Ofertas recibidas** | Acepta ≥110% mercado, ≥125% sin reemplazo, o si el jugador está lesionado ≥90% |
+| **Ofertas recibidas** | Consulta `?status=waiting` (API filtra pendientes) · Acepta ≥110% mercado, ≥125% sin reemplazo, o si el jugador está lesionado ≥90% |
 | **Capitán & Ariete** | Activables por variable de entorno, con scoring y selección automática |
 | **Logs** | Doble salida: `biwenger_log.json` (estructurado) + `biwenger_log.txt` (legible) |
 | **Cron** | Ejecución programable 2× al día con jitter aleatorio |

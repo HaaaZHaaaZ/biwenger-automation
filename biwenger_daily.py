@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Biwenger Auto-Trader v11
+Biwenger Auto-Trader v12
 ========================
-Cambios respecto a v10 (ver CHANGELOG al final del fichero):
+Cambios respecto a v11 (ver CHANGELOG al final del fichero):
   - Corregidos los fallos que cortaban la ejecución (threshold / offers_data).
   - p_start y localía se usan de verdad en el scorer.
   - Dificultad del rival: solo el PRÓXIMO partido de cada equipo.
@@ -412,8 +412,8 @@ def get_market(ctx):
 
 
 def get_offers(ctx):
-    """GET /api/v2/offers → lista de ofertas (una sola llamada por ejecución)."""
-    r = api("GET", "https://biwenger.as.com/api/v2/offers", ctx.token, ctx.league_id, ctx.user_id)
+    """GET /api/v2/offers?status=waiting → SOLO ofertas pendientes (una llamada por ejecución)."""
+    r = api("GET", "https://biwenger.as.com/api/v2/offers?status=waiting", ctx.token, ctx.league_id, ctx.user_id)
     if r is None or r.status_code != 200:
         return []
     data = r.json().get("data")
@@ -1151,7 +1151,7 @@ def save_outputs(ctx, now):
         json.dump(state, f, indent=2, ensure_ascii=False, default=str)
 
     todo = [
-        "# Biwenger Auto-Trader v11",
+        "# Biwenger Auto-Trader v12",
         f"**Liga:** {ctx.league_id} · **Usuario:** {ctx.user_name} (ID {ctx.user_id}) · **Saldo:** €{ctx.balance:,}",
         f"**Puntos:** {ctx.points} · **Ejecución:** {now:%Y-%m-%d %H:%M}" + (" · DRY-RUN" if DRY_RUN else ""),
         "", "## Acciones",
@@ -1184,7 +1184,7 @@ def save_outputs(ctx, now):
 
 def run(probe_only=False):
     now = datetime.now()
-    print(f"\n{'=' * 60}\nBiwenger Auto-Trader v11 — {now:%Y-%m-%d %H:%M}"
+    print(f"\n{'=' * 60}\nBiwenger Auto-Trader v12 — {now:%Y-%m-%d %H:%M}"
           + (" [DRY-RUN]" if DRY_RUN else "") + f"\n{'=' * 60}")
 
     until = rate_limit_active()
@@ -1302,6 +1302,13 @@ if __name__ == "__main__":
         traceback.print_exc()
         sys.exit(1)
 
+
+# CHANGELOG v11 → v12
+# - FIX CRÍTICO: get_offers() usaba GET /api/v2/offers sin filtro → las ofertas waiting
+#   no aparecían (la API solo las devuelve con ?status=waiting). El script rechazaba
+#   ofertas que nunca vio y las quedaban pendientes en la web.
+# - FIX: stage_received_offers ahora recibe SOLO ofertas waiting → procesa todas.
+# - MEJORA: log diferenciado entre ofertas vistas y ofertas rechazadas por la API.
 
 # CHANGELOG v10 → v11
 # - MEJORA: README completamente renovado con documentación completa.
