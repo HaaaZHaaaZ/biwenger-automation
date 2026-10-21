@@ -153,6 +153,11 @@ ACCEPT_NORMAL = env_float("BIWENGER_ACCEPT_NORMAL", 1.10)
 ACCEPT_HIGH = env_float("BIWENGER_ACCEPT_HIGH", 1.25)
 ACCEPT_INJURED = env_float("BIWENGER_ACCEPT_INJURED", 0.90)
 MAX_DROP_PCT = env_float("BIWENGER_MAX_DROP_PCT", 0.08)
+# Desbloqueo de cupo: con la liga a 16 (jugadores + ofertas abiertas) una venta
+# solo libera hueco si COMPLETA la venta. Si las ofertas de la máquina se
+# rechazan, la cuenta queda bloqueada (16/16) y no puede comprar nunca.
+ACCEPT_MACHINE_MIN = env_float("BIWENGER_ACCEPT_MACHINE_MIN", 0.92)
+MAX_TEAM_SIZE = env_int("BIWENGER_MAX_TEAM_SIZE", 16)
 
 BAD_STATUS = {"injured", "suspended", "sanctioned"}
 POS_NAMES = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
@@ -864,6 +869,12 @@ def stage_received_offers(ctx):
             accept, reason = True, f"oferta ≥ {ACCEPT_NORMAL*100:.0f}% y hay reemplazo (caída {drop*100:.1f}%)"
         elif injured and ratio >= ACCEPT_INJURED:
             accept, reason = True, f"{st} y oferta ≥ {ACCEPT_INJURED*100:.0f}%"
+        elif (ratio >= ACCEPT_MACHINE_MIN and pid in ctx.my_sale_ids
+              and pid not in ctx.opt_ids and entry.get("score", 99) < SELL_SCORE_MIN):
+            # Desbloqueo de cupo: jugador de banquillo ya puesto en venta y de valor
+            # bajo. Completar la venta libera un hueco de plantilla y da caja.
+            accept, reason = True, (f"desbloqueo de cupo: en venta, score {entry.get('score', 0):.2f} "
+                                    f"y oferta ≥ {ACCEPT_MACHINE_MIN*100:.0f}% del mercado")
         else:
             reason = f"ratio {ratio*100:.1f}% insuficiente o sin reemplazo"
 
@@ -877,6 +888,7 @@ def stage_received_offers(ctx):
                                               "amount": amount, "reason": reason}, "success")
                 sold.add(pid)
                 ctx.squad_ids = after
+                ctx.my_sale_ids.discard(pid)
                 ctx.balance += amount
                 ctx.recompute()
             else:
@@ -957,6 +969,23 @@ def stage_buy(ctx):
     if MAX_SQUAD and len(ctx.squad_ids) >= MAX_SQUAD:
         print(f"     ⏸ Plantilla completa ({MAX_SQUAD})")
         return
+    # El cupo de la liga cuenta jugadores + ofertas abiertas. Si ya está al máximo
+    # la API responde 403 "Maximum team size reached": es mejor no gastar la
+    # petición y explicar por qué no se puja.
+    own_open = {pid for o in ctx.offers
+                if o.get("status") == "waiting" and (o.get("from") or {}).get("id") == ctx.user_id
+                for pid in offer_player_ids(o)}
+    occupied = len(ctx.squad_ids) + len(own_open)
+    if occupied >= MAX_TEAM_SIZE:
+        on_sale = len(ctx.my_sale_ids)
+        print(f"     ⏸ Cupo de liga completo ({occupied}/{MAX_TEAM_SIZE}): "
+              f"{len(ctx.squad_ids)} jugadores ({len(ctx.squad_ids)-on_sale} libres + "
+              f"{on_sale} en venta) + {len(own_open)} ofertas abiertas")
+        print(f"        Solo se libera cupo al COMPLETAR una venta: se aceptan las ofertas")
+        print(f"        de la máquina (≥{ACCEPT_MACHINE_MIN*100:.0f}%) sobre suplentes en venta.")
+        log_action("buy_check", {"result": "team_full", "occupied": occupied,
+                                 "max": MAX_TEAM_SIZE, "on_sale": on_sale}, "info")
+        return
 
     worst = {}
     if ctx.opt_detail:
@@ -1022,6 +1051,9 @@ def stage_buy(ctx):
             available -= bid
             ctx.committed += bid
             ctx.pending_ids.add(pid)
+            ctx.offers.append({"id": offer_id, "type": "purchase", "status": "waiting",
+                                "amount": bid, "from": {"id": ctx.user_id},
+                                "requestedPlayers": [{"id": pid}]})
             ctx.act("buy_offer_created", player_id=pid, player_name=p["name"], amount=bid, offer_id=offer_id)
             log_action("buy_offer_created", {"player_id": pid, "player_name": p["name"], "amount": bid,
                                              "offer_id": offer_id, "score": p["score"],
@@ -1302,6 +1334,18 @@ if __name__ == "__main__":
         traceback.print_exc()
         sys.exit(1)
 
+
+# CHANGELOG v12 → v13
+# - FIX: desbloqueo de cupo. La liga cuenta jugadores + ofertas abiertas (16).
+#   Con la cuenta a 16/16 toda compra devolvía 403 "Maximum team size reached"
+#   (34 veces acumuladas en el log). La causa: las ventas abiertas nunca se
+#   completaban porque las ofertas de la máquina (95-102% del mercado) se
+#   rechazaban con el umbral del 110%, y sin venta completada el cupo no baja.
+# - NUEVO: ACCEPT_MACHINE_MIN (0.92). Una oferta de la máquina sobre un jugador
+#   de banquillo YA en venta y con score bajo (<2.0) se acepta para completar
+#   la venta y liberar cupo. No aplica a titulares ni a jugadores de valor.
+# - MEJORA: stage_buy comprueba el cupo ANTES de pujar y explica el motivo
+#   (antes gastaba la petición y devolvía un 403 sin contexto).
 
 # CHANGELOG v11 → v12
 # - FIX CRÍTICO: get_offers() usaba GET /api/v2/offers sin filtro → las ofertas waiting
