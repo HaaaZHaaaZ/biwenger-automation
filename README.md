@@ -1,4 +1,4 @@
-# ⚽ Biwenger Auto-Trader v12
+# ⚽ Biwenger Auto-Trader v13
 
 > Automatización inteligente del juego Biwenger vía API REST — login, mercado, alineación, ofertas y más.
 
@@ -16,6 +16,7 @@
 | **Alineación** | 7 formaciones evaluadas, scorer con p_start, localía, dificultad del rival |
 | **Free Market** | Pujas dinámicas según competencia estimada (baja/media/alta) |
 | **Ventas** | Venta automática de suplentes con score < 2.0 o lesionados, previa validación de reemplazo |
+| **Desbloqueo de cupo** | Acepta ofertas de la máquina (≥90%) sobre suplentes en venta para liberar plantilla bloqueada (16/16) |
 | **Ofertas recibidas** | Consulta `?status=waiting` (API filtra pendientes) · Acepta ≥110% mercado, ≥125% sin reemplazo, o si el jugador está lesionado ≥90% |
 | **Capitán & Ariete** | Activables por variable de entorno, con scoring y selección automática |
 | **Logs** | Doble salida: `biwenger_log.json` (estructurado) + `biwenger_log.txt` (legible) |
@@ -84,7 +85,9 @@ python3 biwenger_daily.py --probe
 | Variable | Descripción | Default |
 |----------|-------------|---------|
 | `BIWENGER_SELL_SCORE_MIN` | Score mínimo para mantener un suplente | `2.0` |
-| `BIWENGER_MAX_SELLS` | Ventas máximas por ejecución | `4` |
+| `BIWENGER_MAX_SELLS` | Ventas máximas por ejecución | `6` |
+| `BIWENGER_ACCEPT_MACHINE_MIN` | Acepta ofertas de la máquina (≥90%) sobre suplentes en venta para desbloquear cupo | `0.90` |
+| `BIWENGER_MAX_TEAM_SIZE` | Cupo máximo de la liga (jugadores + ofertas abiertas) | `16` |
 | `BIWENGER_MIN_SQUAD` | Plantilla mínima (nunca bajar de aquí) | `12` |
 | `BIWENGER_MATCH_SOON_HOURS` | Horas antes de un partido para no vender | `48` |
 | `BIWENGER_SELL_BENCH_LINEUP_READY` | Vender suplentes aunque tengan partido si la alineación ya está lista | `true` |
