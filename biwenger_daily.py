@@ -160,6 +160,8 @@ ACCEPT_MACHINE_MIN = env_float("BIWENGER_ACCEPT_MACHINE_MIN", 0.92)
 MAX_TEAM_SIZE = env_int("BIWENGER_MAX_TEAM_SIZE", 16)
 
 BAD_STATUS = {"injured", "suspended", "sanctioned"}
+# Sistema de puntuación de la liga (as | sofascore | stats | social | media | feeberse | personalizado)
+SCORE_SYSTEM = env_str("BIWENGER_SCORE_SYSTEM", "as").lower()
 POS_NAMES = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
 
 # Multiplicador por estado real del jugador. 0.0 = no puede puntuar.
@@ -572,6 +574,17 @@ def score_player(cp, diff_rating, p_start=None, is_home=None):
     easy = 0.5 if diff_rating is None else (100.0 - float(diff_rating)) / 100.0
 
     base = 0.35 * season_avg + 0.35 * fit_avg + 3.0 * 0.30 * easy
+
+    # Bonus por sistema de puntuación "estadísticas": premia acciones defensivas
+    # que acumulan puntos en ese sistema (portería a cero, recuperaciones, paradas)
+    if SCORE_SYSTEM == "stats":
+        pos = cp.get("position", 0)
+        if pos == 1:      # GK: portería a cero +3, paradas +1
+            base *= 1.15
+        elif pos == 2:    # DEF: portería a cero +3, recuperaciones +0.5
+            base *= 1.10
+        elif pos == 3:    # MID: portería a cero +1, precisión de pase +3
+            base *= 1.05
     score = base * mult * p_start
     loc = ""
     if is_home is not None:
