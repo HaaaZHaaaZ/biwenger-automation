@@ -268,6 +268,8 @@ def api(method, url, token=None, league_id=None, user_id=None, body=None):
     headers = get_headers(token, league_id, user_id)
     for attempt in range(MAX_RETRIES + 1):
         REQ["count"] += 1
+        if REQ["count"] >= 10:
+            print(f"     ⚠️ Petición #{REQ['count']} — acercándose al límite del servidor")
         try:
             r = requests.request(method, url, headers=headers, json=body, timeout=REQUEST_TIMEOUT)
         except requests.RequestException as e:
