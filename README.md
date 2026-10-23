@@ -1,17 +1,17 @@
-# ⚽ Biwenger Auto-Trader v13.3
+# ⚽ Biwenger Auto-Trader v13.4
 
 > Automatización inteligente del juego Biwenger vía API REST — login, mercado, alineación, ofertas y más.
 
 ![Python](https://img.shields.io/badge/python-3.9+-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Status](https://img.shields.io/badge/status-production-brightgreen.svg)
-![Version](https://img.shields.io/badge/version-13.3-blue.svg)
+![Version](https://img.shields.io/badge/version-13.4-blue.svg)
 
 ---
 
 ## 📑 Tabla de contenidos
 
-- [Novedades v13.3](#-novedades-v133)
+- [Novedades v13.4](#-novedades-v134)
 - [Características](#-características)
 - [Instalación](#-instalación)
 - [Uso](#-uso)
@@ -25,6 +25,11 @@
 - [Licencia](#-licencia)
 
 ---
+
+## 🆕 Novedades v13.4
+
+- **Informe detallado de ejecución.** Al final de cada run el script imprime por stdout un informe completo: estado de cuenta, plantilla puntuada por posiciones (GK/DEF/MID/FWD), acciones (ofertas recibidas, ventas, compras, alineación), resumen (acciones/writes/peticiones) e incidencias. Diseñado para entrega directa por Telegram (el cron lo envía).
+- **Cambio de alineación visible.** Cuando se cambia la alineación, el informe indica quién **sale** y quién **entra**.
 
 ## 🆕 Novedades v13.3
 

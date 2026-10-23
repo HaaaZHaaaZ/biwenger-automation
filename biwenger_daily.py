@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Biwenger Auto-Trader v13.3
+Biwenger Auto-Trader v13.4
 ==========================
 Cambios respecto a v11 (ver CHANGELOG al final del fichero):
   - Corregidos los fallos que cortaban la ejecución (threshold / offers_data).
@@ -31,7 +31,7 @@ from datetime import datetime, timedelta
 
 import requests
 
-VERSION = "13.3"
+VERSION = "13.4"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -1644,6 +1644,12 @@ def main(argv=None):
 if __name__ == "__main__":
     sys.exit(main())
 
+
+# CHANGELOG v13.3 → v13.4
+# - NUEVO: informe detallado de ejecución impreso por stdout al final de cada run
+#   (estado de cuenta, plantilla puntuada por posiciones, acciones, ventas,
+#   compras, alineación, resumen e incidencias). Pensado para entrega por Telegram.
+# - MEJORA: en los cambios de alineación el informe indica quién SALE y quién ENTRA.
 
 # CHANGELOG v12 → v13
 # - FIX: desbloqueo de cupo. La liga cuenta jugadores + ofertas abiertas (16).
