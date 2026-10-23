@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Biwenger Auto-Trader v12
-========================
+Biwenger Auto-Trader v13.3
+==========================
 Cambios respecto a v11 (ver CHANGELOG al final del fichero):
   - Corregidos los fallos que cortaban la ejecución (threshold / offers_data).
   - p_start y localía se usan de verdad en el scorer.
@@ -14,8 +14,9 @@ Cambios respecto a v11 (ver CHANGELOG al final del fichero):
   - Modo --dry-run (no escribe nada) y --probe (descubre campos de la API).
 
 Uso:
-  python3 biwenger_daily.py              # ejecución normal
-  python3 biwenger_daily.py --dry-run    # simula, sin escrituras
+  python3 biwenger_daily.py              # SIN --live: dry-run (no escribe nada)
+  python3 biwenger_daily.py --live       # ejecución real (única forma de escribir)
+  python3 biwenger_daily.py --dry-run    # igual que sin flag, explícito
   python3 biwenger_daily.py --probe      # vuelca los campos de lineup (capitán/ariete)
 
 Códigos de salida: 0 ok · 1 error · 3 token/credenciales · 5 X-Version obsoleta · 6 rate limit
@@ -31,7 +32,6 @@ from datetime import datetime, timedelta
 import requests
 
 VERSION = "13.3"
-REQ = {"count": 0}
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -280,6 +280,47 @@ def resolve_unknown_state(ctx):
         _json.dump(ops, f)
 
 
+def guarded_write(ctx, kind, fn, *args, **kwargs):
+    """Punto único de control para toda escritura.
+    Comprueba, en orden: ctx.abort, modo dry-run, MAX_WRITES, write_count."""
+    if getattr(ctx, "abort", False):
+        log_action("write_aborted", {"kind": kind, "reason": "abort"}, "warning")
+        return False, "aborted"
+    if getattr(ctx, "read_only", False):
+        log_action("read_only_skip", {"kind": kind}, "info")
+        return False, "read_only"
+    if getattr(ctx, "dry_run", False):
+        log_action("dry_run_skip", {"kind": kind}, "info")
+        return False, "dry_run"
+    if getattr(ctx, "write_count", 0) >= MAX_WRITES:
+        log_action("write_limit", {"kind": kind, "limit": MAX_WRITES}, "warning")
+        return False, "write_limit"
+    ctx.write_count += 1
+    try:
+        return fn(*args, **kwargs)
+    except Exception as e:
+        log_action("write_error", {"kind": kind, "error": str(e)}, "error")
+        return False, "error"
+
+# Contador de peticiones y excepciones tipadas (api() y run() las usan)
+REQ = {"count": 0}
+
+
+class RateLimited(Exception):
+    """HTTP 429."""
+
+
+class AuthError(Exception):
+    """HTTP 401."""
+
+
+class OldVersion(Exception):
+    """HTTP 400 'old version' (X-Version obsoleta)."""
+
+
+# Contexto global para abort
+_CTX = None
+_SESSION = None
 
 
 def set_ctx(ctx):
@@ -334,7 +375,7 @@ def api(method, url, token=None, league_id=None, user_id=None, body=None):
             else:
                 r = requests.request(method, url, headers=headers, json=body, timeout=REQUEST_TIMEOUT)
         except requests.RequestException as e:
-            if is_write:
+            if is_write and "/auth/login" not in url:
                 save_unknown_state({"type": "unknown", "method": method, "url": url, "payload": _summarize_body(body), "timestamp": datetime.now().isoformat()})
                 if _CTX is not None:
                     _CTX.abort = True
@@ -530,27 +571,6 @@ def offer_player_ids(o):
             ids.append(rp)
     return ids
 
-
-def guarded_write(ctx, kind, fn, *args, **kwargs):
-    """Punto único de control para toda escritura."""
-    if getattr(ctx, "abort", False):
-        log_action("write_aborted", {"kind": kind, "reason": "abort"}, "warning")
-        return False, "aborted"
-    if getattr(ctx, "read_only", False):
-        log_action("read_only_skip", {"kind": kind}, "info")
-        return False, "read_only"
-    if getattr(ctx, "dry_run", False):
-        log_action("dry_run_skip", {"kind": kind}, "info")
-        return False, "dry_run"
-    if getattr(ctx, "write_count", 0) >= MAX_WRITES:
-        log_action("write_limit", {"kind": kind, "limit": MAX_WRITES}, "warning")
-        return False, "write_limit"
-    ctx.write_count += 1
-    try:
-        return fn(*args, **kwargs)
-    except Exception as e:
-        log_action("write_error", {"kind": kind, "error": str(e)}, "error")
-        return False, "error"
 
 # ──────────────────────────────────────────────────────────
 # Escrituras (todas respetan --dry-run)
@@ -1395,8 +1415,7 @@ def run(probe_only=False, live=False):
         print("Otra instancia en ejecución, saliendo", file=sys.stderr)
         sys.exit(0)
     global DRY_RUN
-    if live:
-        DRY_RUN = False
+    DRY_RUN = not live   # sin --live NUNCA se escribe, aunque BIWENGER_DRY_RUN=false
     now = datetime.now()
     print(f"\n{'=' * 60}\nBiwenger Auto-Trader v{VERSION} — {now:%Y-%m-%d %H:%M}"
           + (" [DRY-RUN]" if DRY_RUN else "") + f"\n{'=' * 60}")
@@ -1414,7 +1433,8 @@ def run(probe_only=False, live=False):
         ctx.read_only = True
         print("MODO LECTURA: unknown_state presente, no se escribirá")
     print("Modo:", "LIVE" if not DRY_RUN else "DRY-RUN")
-    log_action("run_mode", {"dry_run": DRY_RUN, "read_only": ctx.read_only}, "info")
+    log_action("run_mode", {"mode": "LIVE" if not DRY_RUN else "DRY-RUN",
+                            "read_only": ctx.read_only, "version": VERSION}, "info")
     ctx.session = requests.Session()
     set_session(ctx.session)
     set_wait_budget(ctx.wait_budget)
@@ -1512,27 +1532,29 @@ def run(probe_only=False, live=False):
     return 0
 
 
-if __name__ == "__main__":
+def main(argv=None):
     import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--live", action="store_true")
-    parser.add_argument("--probe", action="store_true")
-    args = parser.parse_args()
-    if args.dry_run:
-        DRY_RUN = True
-    if args.live:
-        DRY_RUN = False
+    ap = argparse.ArgumentParser(description="Biwenger Auto-Trader")
+    ap.add_argument("--live", action="store_true", help="permite escrituras reales (sin esto: dry-run)")
+    ap.add_argument("--dry-run", action="store_true", help="simula, sin escrituras (comportamiento por defecto)")
+    ap.add_argument("--probe", action="store_true", help="vuelca los campos de lineup")
+    a = ap.parse_args(argv)
+    if a.live and a.dry_run:
+        ap.error("--live y --dry-run son incompatibles")
     try:
-        sys.exit(run(probe_only=args.probe, live=args.live))
+        return run(probe_only=a.probe, live=a.live)
     except ValueError as e:
         print(f"ERROR: {e}", file=sys.stderr)
-        sys.exit(1)
+        return 1
     except Exception as e:  # noqa: BLE001
         print(f"ERROR FATAL: {e}", file=sys.stderr)
         import traceback
         traceback.print_exc()
-        sys.exit(1)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
 
 
 # CHANGELOG v12 → v13
