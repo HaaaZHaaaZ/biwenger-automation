@@ -31,16 +31,6 @@
 - **Informe detallado de ejecución.** Al final de cada run el script imprime por stdout un informe completo: estado de cuenta, plantilla puntuada por posiciones (GK/DEF/MID/FWD), acciones (ofertas recibidas, ventas, compras, alineación), resumen (acciones/writes/peticiones) e incidencias. Diseñado para entrega directa por Telegram (el cron lo envía).
 - **Cambio de alineación visible.** Cuando se cambia la alineación, el informe indica quién **sale** y quién **entra**.
 
-## 🆕 Novedades v13.3
-
-- **`--live` obligatorio para escribir.** Sin `--live` el script funciona en modo dry-run (no emite ninguna escritura), aunque `BIWENGER_DRY_RUN=false`.
-- **`guarded_write`:** punto único de control de toda escritura. Orden de comprobación: `abort` → `read_only` → `dry_run` → `MAX_WRITES`. Devuelve un estado explícito (`ok`, `aborted`, `read_only`, `dry_run`, `write_limit`, `error`).
-- **Aborto limpio:** si se agota el presupuesto global de espera (`BIWENGER_WAIT_BUDGET_SECONDS`, default 90s) o llega un `Retry-After > 60s`, se activa `ctx.abort` y no se emite ninguna escritura posterior.
-- **Unknown state:** si una escritura da timeout tras enviarse, se crea `BIWENGER_UNKNOWN_STATE_PATH` y la ejecución se detiene.
-- **Lockfile de instancia única** (`BIWENGER_LOCKFILE_PATH`): dos ejecuciones solapadas no operan a la vez.
-- **CLI con `argparse`:** `--live`, `--dry-run`, `--probe` (incompatibles `--live` y `--dry-run`).
-- **Suite de tests** con `pytest` y `verify.sh` de cierre.
-
 ---
 
 ## ✨ Características
