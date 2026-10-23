@@ -1,26 +1,30 @@
-== git
- D README.md.bak
+== git status
+ M .gitignore
+D  README.md.bak
+ M VERIFY_OUTPUT.txt
  M biwenger_daily.py
- M tests/test_guarded.py
-?? .hermes/
-?? VERIFY_OUTPUT.txt
-?? tests/__init__.py
-?? tests/test_abort.py
-?? verify.sh
+ M tests/test_abort.py
+ M verify.sh
+?? requirements-dev.txt
+== git log
+5e3b3fb docs: actualizar README con seguridad operativa
+5d2c9eb feat: objetivo cumplido - guarded_write, read-only, dry-run, tests, verify
 c2c3c15 feat: Bloque 2 guarded_write conectado a todas las escrituras
 54e58b6 fixup: lockfile sin truncar + contención sin log + LOCKFILE_PATH en .env
 b39ada1 feat: Fase 3 logging JSONL + rotación + escritura atómica + lockfile
-904b794 fixup: guarded_write + persistencia unknown_state + abort global
-afebcdf fixup: ctx abort global, unknown_state path, guards en stages
 == compila
 OK
 == escrituras directas
 OK
 == pytest
-test_sell_player_aborted (test_guarded.TestGuarded.test_sell_player_aborted) ... ok
+============================= test session starts ==============================
+platform linux -- Python 3.13.5, pytest-9.1.1, pluggy-1.7.0 -- /opt/data/.venv_biwenger/bin/python
+cachedir: .pytest_cache
+rootdir: /opt/data/biwenger-automation
+collecting ... collected 2 items
 
-----------------------------------------------------------------------
-Ran 1 test in 0.171s
+tests/test_abort.py::test_abort_on_retry_after_gt60 PASSED               [ 50%]
+tests/test_guarded.py::TestGuarded::test_sell_player_aborted PASSED      [100%]
 
-OK
-DONE
+============================== 2 passed in 1.12s ===============================
+ALL DONE

@@ -16,6 +16,7 @@ def test_abort_on_retry_after_gt60(monkeypatch):
         def request(self, *a, **k):
             return FakeResp()
     bd._SESSION = FakeSession()
+    bd._CTX = ctx
     try:
         api("POST", "https://example.com/x", body={"a":1})
     except Exception:

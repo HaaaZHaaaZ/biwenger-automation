@@ -22,3 +22,5 @@ biwenger_todo.md
 # OS
 .DS_Store
 Thumbs.db
+.hermes/
+README.md.bak

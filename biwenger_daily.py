@@ -31,6 +31,7 @@ from datetime import datetime, timedelta
 import requests
 
 VERSION = "13.3"
+REQ = {"count": 0}
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -1534,8 +1535,10 @@ def run(probe_only=False, live=False):
 if __name__ == "__main__":
     if "--dry-run" in sys.argv:
         DRY_RUN = True
+    if "--live" in sys.argv:
+        DRY_RUN = False
     try:
-        sys.exit(run(probe_only="--probe" in sys.argv))
+        sys.exit(run(probe_only="--probe" in sys.argv, live="--live" in sys.argv))
     except ValueError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(1)
