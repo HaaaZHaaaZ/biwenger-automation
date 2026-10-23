@@ -104,6 +104,7 @@ RATE_LIMIT_WAIT_HOURS = env_float("BIWENGER_RATE_LIMIT_WAIT_HOURS", 4)
 
 # Ficheros
 DATA_DIR = env_str("BIWENGER_DATA_DIR", "/opt/data")
+UNKNOWN_STATE_PATH = os.getenv("BIWENGER_UNKNOWN_STATE_PATH", os.path.join(DATA_DIR, "unknown_state.json"))
 try:
     os.makedirs(DATA_DIR, exist_ok=True)
     if not os.access(DATA_DIR, os.W_OK):
@@ -267,6 +268,14 @@ def get_headers(token=None, league_id=None, user_id=None):
 # Sesión HTTP compartida (se crea en run())
 _SESSION = None
 
+# Contexto global para abort
+_CTX = None
+
+
+def set_ctx(ctx):
+    global _CTX
+    _CTX = ctx
+
 # Presupuesto global de espera por ejecución
 _WAITED = 0
 _WAIT_BUDGET = WAIT_BUDGET_SECONDS
@@ -321,6 +330,8 @@ def api(method, url, token=None, league_id=None, user_id=None, body=None):
                 sleep = backoff[min(attempt, len(backoff) - 1)]
                 if _WAITED + sleep > _WAIT_BUDGET:
                     log_action("wait_budget_exhausted", {"waited": _WAITED, "budget": _WAIT_BUDGET}, "warning")
+                    if _CTX is not None:
+                        _CTX.abort = True
                     return None
                 time.sleep(sleep)
                 _WAITED += sleep
@@ -337,6 +348,8 @@ def api(method, url, token=None, league_id=None, user_id=None, body=None):
                 wait = int(RATE_LIMIT_WAIT_HOURS * 3600)
             if wait > 60:
                 log_action("retry_after_too_long", {"wait": wait, "url": url}, "warning")
+                if _CTX is not None:
+                    _CTX.abort = True
                 return None
             wait = min(wait, 60)
             if attempt < (MAX_RETRIES if is_write else max_retries):
@@ -841,6 +854,8 @@ def build_free_market(ctx, free_sales):
 # ──────────────────────────────────────────────────────────
 
 def stage_cleanup_offers(ctx):
+    if getattr(ctx, "abort", False):
+        return
     """Retira ofertas propias de jugadores no disponibles y las que sobrepasan el saldo."""
     own = [o for o in ctx.offers
            if o.get("status") == "waiting" and (o.get("from") or {}).get("id") == ctx.user_id]
@@ -884,6 +899,8 @@ def stage_cleanup_offers(ctx):
 
 
 def stage_received_offers(ctx):
+    if getattr(ctx, "abort", False):
+        return
     """Acepta/rechaza ofertas recibidas simulando antes la plantilla resultante."""
     print("\n  0. Ofertas recibidas:")
     received = [o for o in ctx.offers
@@ -987,6 +1004,8 @@ def stage_received_offers(ctx):
 
 
 def stage_sell_bench(ctx):
+    if getattr(ctx, "abort", False):
+        return
     """Vende suplentes lesionados o de score bajo solo si hay mejor reemplazo en el mercado."""
     print("\n  1. Ventas de suplentes:")
     starters = set(ctx.opt_ids)
@@ -1039,6 +1058,8 @@ def stage_sell_bench(ctx):
 
 
 def stage_buy(ctx):
+    if getattr(ctx, "abort", False):
+        return
     """Pujas dinámicas por jugadores del mercado libre que mejoren a los titulares."""
     print("\n  2. Compras:")
     if ctx.balance < 0:
@@ -1159,6 +1180,8 @@ def lineup_is_complete(ctx):
 
 
 def stage_lineup(ctx):
+    if getattr(ctx, "abort", False):
+        return
     print("\n  3. Alineación:")
     ok_lineup, why = lineup_is_complete(ctx)
     if not ok_lineup:
@@ -1330,6 +1353,7 @@ def run(probe_only=False):
     ctx.session = requests.Session()
     set_session(ctx.session)
     set_wait_budget(ctx.wait_budget)
+    set_ctx(ctx)
     try:
         ctx.token = TOKEN or login()
         print("✅ Autenticado")
