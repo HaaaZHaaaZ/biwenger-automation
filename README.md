@@ -95,7 +95,13 @@ biwenger-automation/
 
 ---
 
-## 🛡️ Seguridad
+## 🔒 Seguridad operativa
+
+- **Dry-run por defecto:** el bot no escribe nada salvo que se pase `--live`.
+- **Lockfile de instancia única:** `BIWENGER_LOCKFILE_PATH` evita ejecuciones solapadas.
+- **guarded_write:** todas las escrituras pasan por un único guard (abort, dry-run, MAX_WRITES).
+- **Unknown state:** si una escritura da timeout, se crea `BIWENGER_UNKNOWN_STATE_PATH` y el bot entra en modo solo lectura hasta que el usuario lo borre.
+- **Presupuesto global de espera:** `BIWENGER_WAIT_BUDGET_SECONDS` (default 90s).
 
 - `.env` y `*.env` están en `.gitignore` — **nunca se suben credenciales al repositorio**
 - Las credenciales se leen desde variables de entorno o archivo `.env` exclusivamente
