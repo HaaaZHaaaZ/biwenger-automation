@@ -132,7 +132,7 @@ MAX_SQUAD = env_int("BIWENGER_MAX_SQUAD", 0)       # 0 = sin comprobar tope de p
 # suplentes de score bajo. La restricción de 48h solo aplica si la alineación
 # no está completa (riesgo real de quedarse con menos de 11).
 SELL_BENCH_WHEN_LINEUP_READY = env_bool("BIWENGER_SELL_BENCH_LINEUP_READY", True)
-DRY_RUN = env_bool("BIWENGER_DRY_RUN", False)
+DRY_RUN = env_bool("BIWENGER_DRY_RUN", True)
 
 # Alineación / scorer
 MIN_LINEUP_GAIN = env_float("BIWENGER_MIN_LINEUP_GAIN", 0.05)
@@ -285,6 +285,9 @@ def guarded_write(ctx, kind, fn, *args, **kwargs):
     if getattr(ctx, "abort", False):
         log_action("write_aborted", {"kind": kind, "reason": "abort"}, "warning")
         return False, "aborted"
+    if getattr(ctx, "read_only", False):
+        log_action("read_only_skip", {"kind": kind}, "info")
+        return False, "read_only"
     if getattr(ctx, "dry_run", False):
         log_action("dry_run_skip", {"kind": kind}, "info")
         return False, "dry_run"
@@ -355,7 +358,9 @@ def api(method, url, token=None, league_id=None, user_id=None, body=None):
                 r = requests.request(method, url, headers=headers, json=body, timeout=REQUEST_TIMEOUT)
         except requests.RequestException as e:
             if is_write:
-                log_action("unknown_outcome", {"method": method, "url": url, "payload": _summarize_body(body), "error": str(e)}, "warning")
+                save_unknown_state({"type": "unknown", "method": method, "url": url, "payload": _summarize_body(body), "timestamp": datetime.now().isoformat()})
+                if _CTX is not None:
+                    _CTX.abort = True
             if (not is_write) and attempt < max_retries:
                 sleep = backoff[min(attempt, len(backoff) - 1)]
                 if _WAITED + sleep > _WAIT_BUDGET:
@@ -396,6 +401,8 @@ def api(method, url, token=None, league_id=None, user_id=None, body=None):
             raise OldVersion(url)
         return r
     return None
+
+_api_write = api
 
 
 def rate_limit_active():
@@ -449,7 +456,7 @@ def login():
     """POST /api/v2/auth/login → token Bearer."""
     if not EMAIL or not PASSWORD:
         raise ValueError("Faltan BIWENGER_EMAIL / BIWENGER_PASSWORD (o BIWENGER_TOKEN)")
-    r = api("POST", "https://biwenger.as.com/api/v2/auth/login",
+    r = _api_write("POST", "https://biwenger.as.com/api/v2/auth/login",
             body={"email": EMAIL, "password": PASSWORD})
     if r is None or r.status_code != 200:
         raise ValueError(f"Login fallido: {None if r is None else r.status_code}")
@@ -576,11 +583,11 @@ def sell_player(ctx, player_id, price):
         print(f"     ⚠️ No se vende id={player_id}: sin precio de mercado fiable")
         return False, "no_market_price", 0
     sell_price = price
-    if DRY_RUN:
-        log_action("dry_run", {"op": "sell", "player_id": player_id, "price": sell_price})
-        return True, "dry_run", sell_price
-    r = guarded_write(ctx, "sell", lambda: api("POST", "https://biwenger.as.com/api/v2/market", ctx.token, ctx.league_id, ctx.user_id,
+    gw = guarded_write(ctx, "sell", lambda: api("POST", "https://biwenger.as.com/api/v2/market", ctx.token, ctx.league_id, ctx.user_id,
             {"player": player_id, "price": sell_price}))
+    if isinstance(gw, tuple):
+        return gw[0], gw[1], sell_price
+    r = gw
     if r is None:
         return False, "network_error", sell_price
     if r.status_code in (200, 201, 204):
@@ -590,11 +597,11 @@ def sell_player(ctx, player_id, price):
 
 def answer_offer(ctx, offer_id, status):
     """PUT /api/v2/offers/{id} con status accepted/rejected."""
-    if DRY_RUN:
-        log_action("dry_run", {"op": f"offer_{status}", "offer_id": offer_id})
-        return True, "dry_run"
-    r = guarded_write(ctx, "answer_offer", lambda: api("PUT", f"https://biwenger.as.com/api/v2/offers/{offer_id}", ctx.token, ctx.league_id,
+    gw = guarded_write(ctx, "answer_offer", lambda: api("PUT", f"https://biwenger.as.com/api/v2/offers/{offer_id}", ctx.token, ctx.league_id,
             ctx.user_id, {"status": status}))
+    if isinstance(gw, tuple):
+        return gw
+    r = gw
     if r is None:
         return False, "network_error"
     if r.status_code in (200, 201):
@@ -604,11 +611,11 @@ def answer_offer(ctx, offer_id, status):
 
 def create_purchase_offer(ctx, player_id, amount):
     """POST /api/v2/offers → oferta de compra al mercado libre."""
-    if DRY_RUN:
-        log_action("dry_run", {"op": "buy", "player_id": player_id, "amount": amount})
-        return True, None, "dry_run"
-    r = guarded_write(ctx, "create_purchase_offer", lambda: api("POST", "https://biwenger.as.com/api/v2/offers", ctx.token, ctx.league_id, ctx.user_id,
+    gw = guarded_write(ctx, "create_purchase_offer", lambda: api("POST", "https://biwenger.as.com/api/v2/offers", ctx.token, ctx.league_id, ctx.user_id,
             {"to": None, "type": "purchase", "amount": amount, "requestedPlayers": [player_id]}))
+    if isinstance(gw, tuple):
+        return gw[0], None, gw[1]
+    r = gw
     if r is None:
         return False, None, "network_error"
     if r.status_code in (200, 201):
@@ -619,11 +626,11 @@ def create_purchase_offer(ctx, player_id, amount):
 
 def retract_offer(ctx, offer_id):
     """DELETE /api/v2/offers/{id} → retirar oferta propia. 204 = éxito."""
-    if DRY_RUN:
-        log_action("dry_run", {"op": "retract", "offer_id": offer_id})
-        return True, "dry_run"
-    r = guarded_write(ctx, "retract_offer", lambda: api("DELETE", f"https://biwenger.as.com/api/v2/offers/{offer_id}", ctx.token,
+    gw = guarded_write(ctx, "retract_offer", lambda: api("DELETE", f"https://biwenger.as.com/api/v2/offers/{offer_id}", ctx.token,
             ctx.league_id, ctx.user_id))
+    if isinstance(gw, tuple):
+        return gw
+    r = gw
     if r is None:
         return False, "network_error"
     if r.status_code in (200, 201, 204):
@@ -638,11 +645,11 @@ def set_lineup(ctx, players_ids, formation, captain_id=None, striker_id=None):
         lineup[CAPTAIN_KEY] = captain_id
     if STRIKER_KEY and striker_id:
         lineup[STRIKER_KEY] = striker_id
-    if DRY_RUN:
-        log_action("dry_run", {"op": "lineup", "lineup": lineup})
-        return True, {"dry_run": True}
-    r = guarded_write(ctx, "set_lineup", lambda: api("PUT", "https://biwenger.as.com/api/v2/user?fields=*%2Clineup(date)", ctx.token,
+    gw = guarded_write(ctx, "set_lineup", lambda: api("PUT", "https://biwenger.as.com/api/v2/user?fields=*%2Clineup(date)", ctx.token,
             ctx.league_id, ctx.user_id, {"lineup": lineup}))
+    if isinstance(gw, tuple):
+        return gw[0], gw[1]
+    r = gw
     if r is None:
         return False, "network_error"
     if r.status_code == 200:
@@ -856,6 +863,8 @@ class Ctx:
         self.write_count = 0
         self.session = None
         self.rate_limited = False
+        self.read_only = False
+        self.dry_run = DRY_RUN
         self.wait_budget = WAIT_BUDGET_SECONDS
         self.waited = 0
         self.abort = False
@@ -1399,13 +1408,15 @@ def acquire_instance_lock():
     return fd
 
 
-def run(probe_only=False):
+def run(probe_only=False, live=False):
     lock_fd = acquire_instance_lock()
     if lock_fd is None:
         import sys
         print("Otra instancia en ejecución, saliendo", file=sys.stderr)
         sys.exit(0)
-
+    global DRY_RUN
+    if live:
+        DRY_RUN = False
     now = datetime.now()
     print(f"\n{'=' * 60}\nBiwenger Auto-Trader v{VERSION} — {now:%Y-%m-%d %H:%M}"
           + (" [DRY-RUN]" if DRY_RUN else "") + f"\n{'=' * 60}")
@@ -1418,6 +1429,11 @@ def run(probe_only=False):
         time.sleep(random.uniform(0, START_JITTER_MAX))
 
     ctx = Ctx()
+    ctx.dry_run = DRY_RUN
+    if os.path.exists(UNKNOWN_STATE_PATH):
+        ctx.read_only = True
+        print("MODO LECTURA: unknown_state presente, no se escribirá")
+    print("Modo:", "LIVE" if not DRY_RUN else "DRY-RUN")
     ctx.session = requests.Session()
     set_session(ctx.session)
     set_wait_budget(ctx.wait_budget)

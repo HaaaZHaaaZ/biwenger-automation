@@ -1,0 +1,26 @@
+== git
+ D README.md.bak
+ M biwenger_daily.py
+ M tests/test_guarded.py
+?? .hermes/
+?? VERIFY_OUTPUT.txt
+?? tests/__init__.py
+?? tests/test_abort.py
+?? verify.sh
+c2c3c15 feat: Bloque 2 guarded_write conectado a todas las escrituras
+54e58b6 fixup: lockfile sin truncar + contención sin log + LOCKFILE_PATH en .env
+b39ada1 feat: Fase 3 logging JSONL + rotación + escritura atómica + lockfile
+904b794 fixup: guarded_write + persistencia unknown_state + abort global
+afebcdf fixup: ctx abort global, unknown_state path, guards en stages
+== compila
+OK
+== escrituras directas
+OK
+== pytest
+test_sell_player_aborted (test_guarded.TestGuarded.test_sell_player_aborted) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.171s
+
+OK
+DONE
