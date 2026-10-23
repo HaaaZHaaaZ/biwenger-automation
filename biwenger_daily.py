@@ -265,8 +265,58 @@ def get_headers(token=None, league_id=None, user_id=None):
     return h
 
 
-# Sesión HTTP compartida (se crea en run())
-_SESSION = None
+import json as _json
+
+def save_unknown_state(op):
+    try:
+        data = []
+        if os.path.exists(UNKNOWN_STATE_PATH):
+            with open(UNKNOWN_STATE_PATH) as f:
+                data = _json.load(f)
+        data.append(op)
+        with open(UNKNOWN_STATE_PATH, "w") as f:
+            _json.dump(data, f)
+    except Exception as e:
+        log_action("unknown_state_save_error", {"error": str(e)}, "error")
+
+def load_unknown_state():
+    try:
+        if os.path.exists(UNKNOWN_STATE_PATH):
+            with open(UNKNOWN_STATE_PATH) as f:
+                return _json.load(f)
+    except Exception:
+        return []
+    return []
+
+def resolve_unknown_state(ctx):
+    ops = load_unknown_state()
+    if not ops:
+        return
+    for op in ops:
+        log_action("unknown_state_pending", op, "warning")
+    # no repetir automáticamente; dejar pendiente para revisión manual
+    with open(UNKNOWN_STATE_PATH, "w") as f:
+        _json.dump(ops, f)
+
+
+def guarded_write(ctx, kind, fn, *args, **kwargs):
+    """Punto único de control para toda escritura.
+    Comprueba, en orden: ctx.abort, modo dry-run, MAX_WRITES, write_count."""
+    if getattr(ctx, "abort", False):
+        log_action("write_aborted", {"kind": kind, "reason": "abort"}, "warning")
+        return False, "aborted"
+    if getattr(ctx, "dry_run", False):
+        log_action("dry_run_skip", {"kind": kind}, "info")
+        return False, "dry_run"
+    if getattr(ctx, "write_count", 0) >= MAX_WRITES:
+        log_action("write_limit", {"kind": kind, "limit": MAX_WRITES}, "warning")
+        return False, "write_limit"
+    ctx.write_count += 1
+    try:
+        return fn(*args, **kwargs)
+    except Exception as e:
+        log_action("write_error", {"kind": kind, "error": str(e)}, "error")
+        return False, "error"
 
 # Contexto global para abort
 _CTX = None
