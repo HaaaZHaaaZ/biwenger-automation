@@ -275,10 +275,16 @@ def set_session(s):
 def api(method, url, token=None, league_id=None, user_id=None, body=None):
     """Petición con reintento por red, pausa entre llamadas y errores tipados.
     Usa la Session compartida si existe (creada en run()); si no, requests directo.
-    Maneja 429 con Retry-After."""
+    - GET: reintenta ante errores de red con backoff corto (2s/4s/8s, tope 60s).
+    - POST/PUT/DELETE: NO reintenta tras timeout/error de lectura (evita duplicar ofertas/ventas);
+      solo reintenta ante 429 respetando Retry-After (acotado a 60s)."""
     headers = get_headers(token, league_id, user_id)
     session = _SESSION
-    for attempt in range(MAX_RETRIES + 1):
+    is_write = method.upper() in ("POST", "PUT", "DELETE", "PATCH")
+    max_retries = MAX_RETRIES if method.upper() == "GET" else 0
+    # backoff corto y acotado
+    backoff = [2, 4, 8]
+    for attempt in range(max_retries + 1):
         REQ["count"] += 1
         try:
             if session is not None:
@@ -286,8 +292,8 @@ def api(method, url, token=None, league_id=None, user_id=None, body=None):
             else:
                 r = requests.request(method, url, headers=headers, json=body, timeout=REQUEST_TIMEOUT)
         except requests.RequestException as e:
-            if attempt < MAX_RETRIES:
-                time.sleep(RETRY_DELAY)
+            if (not is_write) and attempt < max_retries:
+                time.sleep(backoff[min(attempt, len(backoff) - 1)])
                 continue
             log_action("network_error", {"method": method, "url": url, "error": str(e)}, "error")
             return None
@@ -299,8 +305,9 @@ def api(method, url, token=None, league_id=None, user_id=None, body=None):
                 wait = int(retry_after) if retry_after else RATE_LIMIT_WAIT_HOURS * 3600
             except (TypeError, ValueError):
                 wait = int(RATE_LIMIT_WAIT_HOURS * 3600)
-            if attempt < MAX_RETRIES:
-                time.sleep(min(wait, 60))
+            wait = min(wait, 60)
+            if attempt < (MAX_RETRIES if is_write else max_retries):
+                time.sleep(wait)
                 continue
             raise RateLimited(url)
         if r.status_code == 401:
