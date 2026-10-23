@@ -1,13 +1,11 @@
 == git status
  M VERIFY_OUTPUT.txt
- M biwenger_daily.py
-?? tests/test_write_modes.py
 == git log
+7639377 docs: cron --live en README
+db5e005 feat: tests write modes + verify ok
 3ecf1da fix: guarded_write único, CLI argparse, tests
 e080201 fix: REQ, tests, verify.sh completo
 5e3b3fb docs: actualizar README con seguridad operativa
-5d2c9eb feat: objetivo cumplido - guarded_write, read-only, dry-run, tests, verify
-c2c3c15 feat: Bloque 2 guarded_write conectado a todas las escrituras
 == compila
 OK
 == escrituras directas
@@ -26,5 +24,5 @@ tests/test_write_modes.py::TestWriteModes::test_dry_run_no_api PASSED    [ 66%]
 tests/test_write_modes.py::TestWriteModes::test_read_only_no_api PASSED  [ 83%]
 tests/test_write_modes.py::TestWriteModes::test_timeout_post_creates_state PASSED [100%]
 
-============================== 6 passed in 2.46s ===============================
+============================== 6 passed in 2.63s ===============================
 ALL DONE
