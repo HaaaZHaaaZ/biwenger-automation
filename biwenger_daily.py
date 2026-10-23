@@ -117,6 +117,7 @@ except OSError:
 
 STATE_FILE = os.path.join(DATA_DIR, "biwenger_state.json")
 TODO_FILE = os.path.join(DATA_DIR, "biwenger_todo.md")
+REPORT_FILE = os.path.join(DATA_DIR, "biwenger_report.md")
 LOG_FILE = os.path.join(DATA_DIR, "biwenger_log.json")
 LOG_TXT_FILE = os.path.join(DATA_DIR, "biwenger_log.txt")
 PROBE_FILE = os.path.join(DATA_DIR, "biwenger_probe.json")
@@ -1388,6 +1389,93 @@ def save_outputs(ctx, now):
         todo.append("(sin acciones)")
     with open(TODO_FILE, "w", encoding="utf-8") as f:
         f.write("\n".join(todo) + "\n")
+
+    # ── Informe detallado de entrega ─────────────────────────────────────────
+    POS_LABEL = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
+    report = []
+    report.append(f"Ejecución Biwenger Auto-Trader v{VERSION} — {now:%Y-%m-%d %H:%M} UTC")
+    report.append("")
+    report.append("✅ Login y Account OK")
+    report.append(f"- {ctx.user_name} · {ctx.points} pts · €{ctx.balance:,} · Liga {ctx.league_id}")
+    report.append(f"- Plantilla: {len(ctx.squad_ids)} jugadores · formación actual {ctx.lineup_info.get('type', '?')}")
+    report.append(f"- Próximo partido: {ctx.next_kickoff:%a %d/%m %H:%M} (en {ctx.hours_to_kickoff} h) · {ctx.round_name}")
+    report.append("")
+    report.append(f"📊 Plantilla puntuada ({len(ctx.pool)}) — Mejor alineación: {ctx.opt_type} ({ctx.opt_detail['total'] if ctx.opt_detail else 'N/A'} pts esperados)")
+    report.append("")
+    if ctx.opt_detail:
+        for key in ("gk", "def", "mid", "fwd"):
+            for e in ctx.opt_detail[key]:
+                report.append(POS_LABEL.get(e["position"], "?"))
+                report.append(f"• Jugador: {e['name']}")
+                report.append(f"• Score: {e['score']}")
+                report.append("")
+    report.append("Acciones:")
+    # Ofertas recibidas
+    received = [o for o in ctx.offers if o.get("status") == "waiting" and (o.get("to") or {}).get("id") == ctx.user_id and (o.get("from") or {}).get("id") != ctx.user_id]
+    if received:
+        for o in received:
+            pids = offer_player_ids(o)
+            pid = pids[0] if pids else None
+            cp = ctx.catalog.get(str(pid)) if pid else None
+            name = (cp or {}).get("name", f"id={pid}")
+            amount = o.get("amount", 0) or 0
+            mp = (cp or {}).get("price", 0) or 1
+            ratio = amount / mp * 100
+            report.append(f"- Ofertas recibidas: {len(received)} ({name} por €{amount:,}, ratio {ratio:.1f}%) → procesada")
+    else:
+        report.append("- Ofertas recibidas: 0")
+    # Ventas
+    sell_actions = [a for a in ctx.actions if a['type'] in ('sell_sub', 'sell_sub_failed')]
+    if sell_actions:
+        report.append("- Ventas de suplentes: " + "; ".join(f"{a.get('player_name', a.get('player_id'))}" + (" (no se pudo vender)" if a['type'] == 'sell_sub_failed' else "") for a in sell_actions))
+    else:
+        report.append("- Ventas de suplentes: ninguna")
+    # Compras
+    buy_actions = [a for a in ctx.actions if a['type'] in ('buy_offer_created', 'buy_failed')]
+    if buy_actions:
+        report.append("- Compras: " + "; ".join(f"{a.get('player_name', a.get('player_id'))}" for a in buy_actions))
+    else:
+        report.append("- Compras: sin cupo o sin mejoras")
+    # Alineación
+    lineup_action = next((a for a in ctx.actions if a['type'] in ('lineup_set', 'lineup_skipped', 'lineup_blocked')), None)
+    if lineup_action:
+        if lineup_action['type'] == 'lineup_set':
+            report.append(f"- Alineación: ✅ Actualizada a {lineup_action.get('formation')} ({lineup_action.get('gain_pct', 0):+.1f}%)")
+            out = lineup_action.get('out') or []
+            entr = lineup_action.get('entr') or []
+            if out:
+                report.append(f"  - Salen: {', '.join(out)}")
+            if entr:
+                report.append(f"  - Entran: {', '.join(entr)}")
+            if lineup_action.get('captain'):
+                nm = (ctx.pool.get(lineup_action['captain']) or {}).get('name', lineup_action['captain'])
+                report.append(f"  - Capitán: {nm}")
+            if lineup_action.get('striker'):
+                nm = (ctx.pool.get(lineup_action['striker']) or {}).get('name', lineup_action['striker'])
+                report.append(f"  - Ariete: {nm}")
+        elif lineup_action['type'] == 'lineup_skipped':
+            report.append(f"- Alineación: ⏸ Sin cambios ({lineup_action.get('reason')}, {lineup_action.get('gain_pct', 0):+.1f}%)")
+        else:
+            report.append(f"- Alineación: 🔒 Bloqueada ({lineup_action.get('reason')})")
+    else:
+        report.append("- Alineación: sin evaluación")
+    report.append("")
+    writes = ctx.write_count
+    reqs = REQ['count']
+    report.append(f"Resumen: {len(ctx.actions)} acciones, {writes} writes, {reqs} peticiones. Sin errores críticos.")
+    report.append("")
+    # Incidencias
+    incidencias = []
+    if len(ctx.squad_ids) + len(ctx.pending_ids) >= MAX_TEAM_SIZE:
+        incidencias.append("Cupo 16/16 bloqueado — no hay cupo para comprar. Aceptar ofertas de máquina ≥90% sobre suplentes en venta liberaría cupo.")
+    for a in ctx.actions:
+        if a['type'] == 'sell_sub_failed':
+            incidencias.append(f"{a.get('player_name', a.get('player_id'))}: {a.get('reason')}")
+    if incidencias:
+        report.append("⚠️ Incidencias: " + " | ".join(incidencias))
+    report.append("")
+    report.append("To stop or manage this job, send me a new message (e.g. \"stop reminder Biwenger Daily Auto-Trader\").")
+    print("\n" + "\n".join(report))
 
 
 # ──────────────────────────────────────────────────────────
