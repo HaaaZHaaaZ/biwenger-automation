@@ -115,7 +115,7 @@ biwenger-automation/
 
 ```bash
 # Ejecutar 2 veces al día (9:00 y 21:00)
-0 9,21 * * * cd /opt/data/biwenger-automation && source .venv/bin/activate && python3 biwenger_daily.py
+0 9,21 * * * cd /opt/data/biwenger-automation && source .venv/bin/activate && python3 biwenger_daily.py --live
 ```
 
 ---
