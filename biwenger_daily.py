@@ -1414,6 +1414,7 @@ def run(probe_only=False, live=False):
         ctx.read_only = True
         print("MODO LECTURA: unknown_state presente, no se escribirá")
     print("Modo:", "LIVE" if not DRY_RUN else "DRY-RUN")
+    log_action("run_mode", {"dry_run": DRY_RUN, "read_only": ctx.read_only}, "info")
     ctx.session = requests.Session()
     set_session(ctx.session)
     set_wait_budget(ctx.wait_budget)

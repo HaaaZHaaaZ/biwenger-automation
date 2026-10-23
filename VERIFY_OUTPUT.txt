@@ -1,17 +1,13 @@
 == git status
- M .gitignore
-D  README.md.bak
  M VERIFY_OUTPUT.txt
  M biwenger_daily.py
- M tests/test_abort.py
- M verify.sh
-?? requirements-dev.txt
+?? tests/test_write_modes.py
 == git log
+3ecf1da fix: guarded_write único, CLI argparse, tests
+e080201 fix: REQ, tests, verify.sh completo
 5e3b3fb docs: actualizar README con seguridad operativa
 5d2c9eb feat: objetivo cumplido - guarded_write, read-only, dry-run, tests, verify
 c2c3c15 feat: Bloque 2 guarded_write conectado a todas las escrituras
-54e58b6 fixup: lockfile sin truncar + contención sin log + LOCKFILE_PATH en .env
-b39ada1 feat: Fase 3 logging JSONL + rotación + escritura atómica + lockfile
 == compila
 OK
 == escrituras directas
@@ -21,10 +17,14 @@ OK
 platform linux -- Python 3.13.5, pytest-9.1.1, pluggy-1.7.0 -- /opt/data/.venv_biwenger/bin/python
 cachedir: .pytest_cache
 rootdir: /opt/data/biwenger-automation
-collecting ... collected 2 items
+collecting ... collected 6 items
 
-tests/test_abort.py::test_abort_on_retry_after_gt60 PASSED               [ 50%]
-tests/test_guarded.py::TestGuarded::test_sell_player_aborted PASSED      [100%]
+tests/test_abort.py::test_abort_on_retry_after_gt60 PASSED               [ 16%]
+tests/test_guarded.py::TestGuarded::test_sell_player_aborted PASSED      [ 33%]
+tests/test_write_modes.py::TestWriteModes::test_abort_no_api PASSED      [ 50%]
+tests/test_write_modes.py::TestWriteModes::test_dry_run_no_api PASSED    [ 66%]
+tests/test_write_modes.py::TestWriteModes::test_read_only_no_api PASSED  [ 83%]
+tests/test_write_modes.py::TestWriteModes::test_timeout_post_creates_state PASSED [100%]
 
-============================== 2 passed in 1.12s ===============================
+============================== 6 passed in 2.46s ===============================
 ALL DONE
