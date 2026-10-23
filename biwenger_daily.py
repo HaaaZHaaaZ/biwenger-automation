@@ -30,7 +30,7 @@ from datetime import datetime, timedelta
 
 import requests
 
-VERSION = "12"
+VERSION = "13.3"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -95,6 +95,7 @@ UA = env_str(
     "(KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36",
 )
 REQUEST_TIMEOUT = env_int("BIWENGER_REQUEST_TIMEOUT", 30)
+WAIT_BUDGET_SECONDS = env_int("BIWENGER_WAIT_BUDGET_SECONDS", 90)
 MAX_RETRIES = env_int("BIWENGER_MAX_RETRIES", 1)
 RETRY_DELAY = env_int("BIWENGER_RETRY_DELAY", 30)
 REQUEST_DELAY = env_float("BIWENGER_REQUEST_DELAY", 0.8)       # pausa media entre peticiones
@@ -266,23 +267,45 @@ def get_headers(token=None, league_id=None, user_id=None):
 # Sesión HTTP compartida (se crea en run())
 _SESSION = None
 
+# Presupuesto global de espera por ejecución
+_WAITED = 0
+_WAIT_BUDGET = WAIT_BUDGET_SECONDS
+
+
+def set_wait_budget(budget):
+    global _WAIT_BUDGET, _WAITED
+    _WAIT_BUDGET = budget
+    _WAITED = 0
+
 
 def set_session(s):
     global _SESSION
     _SESSION = s
 
 
+
+def _summarize_body(body):
+    if body is None:
+        return None
+    try:
+        import json
+        s = json.dumps(body)
+        return s[:200]
+    except Exception:
+        return str(body)[:200]
+
 def api(method, url, token=None, league_id=None, user_id=None, body=None):
     """Petición con reintento por red, pausa entre llamadas y errores tipados.
     Usa la Session compartida si existe (creada en run()); si no, requests directo.
     - GET: reintenta ante errores de red con backoff corto (2s/4s/8s, tope 60s).
     - POST/PUT/DELETE: NO reintenta tras timeout/error de lectura (evita duplicar ofertas/ventas);
-      solo reintenta ante 429 respetando Retry-After (acotado a 60s)."""
+      solo reintenta ante 429 respetando Retry-After (acotado a 60s).
+    - Presupuesto global de espera: si se agota, aborta limpio."""
+    global _WAITED
     headers = get_headers(token, league_id, user_id)
     session = _SESSION
     is_write = method.upper() in ("POST", "PUT", "DELETE", "PATCH")
     max_retries = MAX_RETRIES if method.upper() == "GET" else 0
-    # backoff corto y acotado
     backoff = [2, 4, 8]
     for attempt in range(max_retries + 1):
         REQ["count"] += 1
@@ -292,8 +315,15 @@ def api(method, url, token=None, league_id=None, user_id=None, body=None):
             else:
                 r = requests.request(method, url, headers=headers, json=body, timeout=REQUEST_TIMEOUT)
         except requests.RequestException as e:
+            if is_write:
+                log_action("unknown_outcome", {"method": method, "url": url, "payload": _summarize_body(body), "error": str(e)}, "warning")
             if (not is_write) and attempt < max_retries:
-                time.sleep(backoff[min(attempt, len(backoff) - 1)])
+                sleep = backoff[min(attempt, len(backoff) - 1)]
+                if _WAITED + sleep > _WAIT_BUDGET:
+                    log_action("wait_budget_exhausted", {"waited": _WAITED, "budget": _WAIT_BUDGET}, "warning")
+                    return None
+                time.sleep(sleep)
+                _WAITED += sleep
                 continue
             log_action("network_error", {"method": method, "url": url, "error": str(e)}, "error")
             return None
@@ -305,9 +335,16 @@ def api(method, url, token=None, league_id=None, user_id=None, body=None):
                 wait = int(retry_after) if retry_after else RATE_LIMIT_WAIT_HOURS * 3600
             except (TypeError, ValueError):
                 wait = int(RATE_LIMIT_WAIT_HOURS * 3600)
+            if wait > 60:
+                log_action("retry_after_too_long", {"wait": wait, "url": url}, "warning")
+                return None
             wait = min(wait, 60)
             if attempt < (MAX_RETRIES if is_write else max_retries):
+                if _WAITED + wait > _WAIT_BUDGET:
+                    log_action("wait_budget_exhausted", {"waited": _WAITED, "budget": _WAIT_BUDGET}, "warning")
+                    return None
                 time.sleep(wait)
+                _WAITED += wait
                 continue
             raise RateLimited(url)
         if r.status_code == 401:
@@ -758,6 +795,9 @@ class Ctx:
         self.write_count = 0
         self.session = None
         self.rate_limited = False
+        self.wait_budget = WAIT_BUDGET_SECONDS
+        self.waited = 0
+        self.abort = False
         self.captain_id = None
         self.striker_id = None
 
@@ -1289,6 +1329,7 @@ def run(probe_only=False):
     ctx = Ctx()
     ctx.session = requests.Session()
     set_session(ctx.session)
+    set_wait_budget(ctx.wait_budget)
     try:
         ctx.token = TOKEN or login()
         print("✅ Autenticado")
