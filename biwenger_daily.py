@@ -30,6 +30,8 @@ from datetime import datetime, timedelta
 
 import requests
 
+VERSION = "12"
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -441,7 +443,11 @@ def offer_player_ids(o):
 
 def sell_player(ctx, player_id, price):
     """POST /api/v2/market → poner en venta. 204 = éxito."""
-    sell_price = price if price and price > 0 else 1
+    if not price or price <= 0:
+        log_action("sell_skipped", {"player_id": player_id, "reason": "no_market_price"}, "warning")
+        print(f"     ⚠️ No se vende id={player_id}: sin precio de mercado fiable")
+        return False, "no_market_price", 0
+    sell_price = price
     if DRY_RUN:
         log_action("dry_run", {"op": "sell", "player_id": player_id, "price": sell_price})
         return True, "dry_run", sell_price
@@ -876,7 +882,9 @@ def stage_received_offers(ctx):
             accept, reason = True, (f"desbloqueo de cupo: en venta, score {entry.get('score', 0):.2f} "
                                     f"y oferta ≥ {ACCEPT_MACHINE_MIN*100:.0f}% del mercado")
         else:
-            reason = f"ratio {ratio*100:.1f}% insuficiente o sin reemplazo"
+            applicable = ACCEPT_INJURED if injured else (ACCEPT_NORMAL if has_replacement else ACCEPT_MACHINE_MIN)
+            reason = (f"ratio {ratio*100:.1f}% insuficiente (mínimo aplicable {applicable*100:.0f}%) "
+                      f"o sin reemplazo")
 
         if accept:
             ok, msg = answer_offer(ctx, oid, "accepted")
@@ -1237,7 +1245,7 @@ def save_outputs(ctx, now):
 
 def run(probe_only=False):
     now = datetime.now()
-    print(f"\n{'=' * 60}\nBiwenger Auto-Trader v12 — {now:%Y-%m-%d %H:%M}"
+    print(f"\n{'=' * 60}\nBiwenger Auto-Trader v{VERSION} — {now:%Y-%m-%d %H:%M}"
           + (" [DRY-RUN]" if DRY_RUN else "") + f"\n{'=' * 60}")
 
     until = rate_limit_active()
