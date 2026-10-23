@@ -547,6 +547,24 @@ def offer_player_ids(o):
     return ids
 
 
+def guarded_write(ctx, kind, fn, *args, **kwargs):
+    """Punto único de control para toda escritura."""
+    if getattr(ctx, "abort", False):
+        log_action("write_aborted", {"kind": kind, "reason": "abort"}, "warning")
+        return False, "aborted"
+    if getattr(ctx, "dry_run", False):
+        log_action("dry_run_skip", {"kind": kind}, "info")
+        return False, "dry_run"
+    if getattr(ctx, "write_count", 0) >= MAX_WRITES:
+        log_action("write_limit", {"kind": kind, "limit": MAX_WRITES}, "warning")
+        return False, "write_limit"
+    ctx.write_count += 1
+    try:
+        return fn(*args, **kwargs)
+    except Exception as e:
+        log_action("write_error", {"kind": kind, "error": str(e)}, "error")
+        return False, "error"
+
 # ──────────────────────────────────────────────────────────
 # Escrituras (todas respetan --dry-run)
 # ──────────────────────────────────────────────────────────
@@ -561,8 +579,8 @@ def sell_player(ctx, player_id, price):
     if DRY_RUN:
         log_action("dry_run", {"op": "sell", "player_id": player_id, "price": sell_price})
         return True, "dry_run", sell_price
-    r = api("POST", "https://biwenger.as.com/api/v2/market", ctx.token, ctx.league_id, ctx.user_id,
-            {"player": player_id, "price": sell_price})
+    r = guarded_write(ctx, "sell", lambda: api("POST", "https://biwenger.as.com/api/v2/market", ctx.token, ctx.league_id, ctx.user_id,
+            {"player": player_id, "price": sell_price}))
     if r is None:
         return False, "network_error", sell_price
     if r.status_code in (200, 201, 204):
@@ -575,8 +593,8 @@ def answer_offer(ctx, offer_id, status):
     if DRY_RUN:
         log_action("dry_run", {"op": f"offer_{status}", "offer_id": offer_id})
         return True, "dry_run"
-    r = api("PUT", f"https://biwenger.as.com/api/v2/offers/{offer_id}", ctx.token, ctx.league_id,
-            ctx.user_id, {"status": status})
+    r = guarded_write(ctx, "answer_offer", lambda: api("PUT", f"https://biwenger.as.com/api/v2/offers/{offer_id}", ctx.token, ctx.league_id,
+            ctx.user_id, {"status": status}))
     if r is None:
         return False, "network_error"
     if r.status_code in (200, 201):
@@ -589,8 +607,8 @@ def create_purchase_offer(ctx, player_id, amount):
     if DRY_RUN:
         log_action("dry_run", {"op": "buy", "player_id": player_id, "amount": amount})
         return True, None, "dry_run"
-    r = api("POST", "https://biwenger.as.com/api/v2/offers", ctx.token, ctx.league_id, ctx.user_id,
-            {"to": None, "type": "purchase", "amount": amount, "requestedPlayers": [player_id]})
+    r = guarded_write(ctx, "create_purchase_offer", lambda: api("POST", "https://biwenger.as.com/api/v2/offers", ctx.token, ctx.league_id, ctx.user_id,
+            {"to": None, "type": "purchase", "amount": amount, "requestedPlayers": [player_id]}))
     if r is None:
         return False, None, "network_error"
     if r.status_code in (200, 201):
@@ -604,8 +622,8 @@ def retract_offer(ctx, offer_id):
     if DRY_RUN:
         log_action("dry_run", {"op": "retract", "offer_id": offer_id})
         return True, "dry_run"
-    r = api("DELETE", f"https://biwenger.as.com/api/v2/offers/{offer_id}", ctx.token,
-            ctx.league_id, ctx.user_id)
+    r = guarded_write(ctx, "retract_offer", lambda: api("DELETE", f"https://biwenger.as.com/api/v2/offers/{offer_id}", ctx.token,
+            ctx.league_id, ctx.user_id))
     if r is None:
         return False, "network_error"
     if r.status_code in (200, 201, 204):
@@ -623,8 +641,8 @@ def set_lineup(ctx, players_ids, formation, captain_id=None, striker_id=None):
     if DRY_RUN:
         log_action("dry_run", {"op": "lineup", "lineup": lineup})
         return True, {"dry_run": True}
-    r = api("PUT", "https://biwenger.as.com/api/v2/user?fields=*%2Clineup(date)", ctx.token,
-            ctx.league_id, ctx.user_id, {"lineup": lineup})
+    r = guarded_write(ctx, "set_lineup", lambda: api("PUT", "https://biwenger.as.com/api/v2/user?fields=*%2Clineup(date)", ctx.token,
+            ctx.league_id, ctx.user_id, {"lineup": lineup}))
     if r is None:
         return False, "network_error"
     if r.status_code == 200:
