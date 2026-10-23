@@ -263,13 +263,28 @@ def get_headers(token=None, league_id=None, user_id=None):
     return h
 
 
+# Sesión HTTP compartida (se crea en run())
+_SESSION = None
+
+
+def set_session(s):
+    global _SESSION
+    _SESSION = s
+
+
 def api(method, url, token=None, league_id=None, user_id=None, body=None):
-    """Petición con reintento por red, pausa entre llamadas y errores tipados."""
+    """Petición con reintento por red, pausa entre llamadas y errores tipados.
+    Usa la Session compartida si existe (creada en run()); si no, requests directo.
+    Maneja 429 con Retry-After."""
     headers = get_headers(token, league_id, user_id)
+    session = _SESSION
     for attempt in range(MAX_RETRIES + 1):
         REQ["count"] += 1
         try:
-            r = requests.request(method, url, headers=headers, json=body, timeout=REQUEST_TIMEOUT)
+            if session is not None:
+                r = session.request(method, url, headers=headers, json=body, timeout=REQUEST_TIMEOUT)
+            else:
+                r = requests.request(method, url, headers=headers, json=body, timeout=REQUEST_TIMEOUT)
         except requests.RequestException as e:
             if attempt < MAX_RETRIES:
                 time.sleep(RETRY_DELAY)
@@ -279,6 +294,14 @@ def api(method, url, token=None, league_id=None, user_id=None, body=None):
         if REQUEST_DELAY > 0:
             time.sleep(random.uniform(0.7, 1.3) * REQUEST_DELAY)
         if r.status_code == 429:
+            retry_after = r.headers.get("Retry-After")
+            try:
+                wait = int(retry_after) if retry_after else RATE_LIMIT_WAIT_HOURS * 3600
+            except (TypeError, ValueError):
+                wait = int(RATE_LIMIT_WAIT_HOURS * 3600)
+            if attempt < MAX_RETRIES:
+                time.sleep(min(wait, 60))
+                continue
             raise RateLimited(url)
         if r.status_code == 401:
             raise AuthError(url)
@@ -726,6 +749,7 @@ class Ctx:
         self.opt_detail = None
         self.actions = []
         self.write_count = 0
+        self.session = None
         self.rate_limited = False
         self.captain_id = None
         self.striker_id = None
@@ -1256,6 +1280,8 @@ def run(probe_only=False):
         time.sleep(random.uniform(0, START_JITTER_MAX))
 
     ctx = Ctx()
+    ctx.session = requests.Session()
+    set_session(ctx.session)
     try:
         ctx.token = TOKEN or login()
         print("✅ Autenticado")
