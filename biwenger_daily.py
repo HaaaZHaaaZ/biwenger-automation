@@ -104,6 +104,7 @@ RATE_LIMIT_WAIT_HOURS = env_float("BIWENGER_RATE_LIMIT_WAIT_HOURS", 4)
 
 # Ficheros
 DATA_DIR = env_str("BIWENGER_DATA_DIR", "/opt/data")
+LOCKFILE_PATH = os.getenv("BIWENGER_LOCKFILE_PATH", os.path.join(DATA_DIR, "biwenger.lock"))
 UNKNOWN_STATE_PATH = os.getenv("BIWENGER_UNKNOWN_STATE_PATH", os.path.join(DATA_DIR, "unknown_state.json"))
 try:
     os.makedirs(DATA_DIR, exist_ok=True)
@@ -1366,7 +1367,27 @@ def save_outputs(ctx, now):
 # Ejecución
 # ──────────────────────────────────────────────────────────
 
+def acquire_instance_lock():
+    import fcntl, os
+    fd = os.open(LOCKFILE_PATH, os.O_CREAT | os.O_RDWR)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (IOError, OSError):
+        os.close(fd)
+        return None
+    os.ftruncate(fd, 0)
+    os.write(fd, str(os.getpid()).encode())
+    os.fsync(fd)
+    return fd
+
+
 def run(probe_only=False):
+    lock_fd = acquire_instance_lock()
+    if lock_fd is None:
+        import sys
+        print("Otra instancia en ejecución, saliendo", file=sys.stderr)
+        sys.exit(0)
+
     now = datetime.now()
     print(f"\n{'=' * 60}\nBiwenger Auto-Trader v{VERSION} — {now:%Y-%m-%d %H:%M}"
           + (" [DRY-RUN]" if DRY_RUN else "") + f"\n{'=' * 60}")
