@@ -1,16 +1,11 @@
 
 == git
  M VERIFY_OUTPUT.txt
- M biwenger_daily.py
- M requirements-dev.txt
- M verify.sh
-?? tests/conftest.py
-?? tests/test_safety.py
+5fb785c feat: actualizar desde biwenger-fixes.zip
 40161a6 chore: VERIFY_OUTPUT actualizado
 7639377 docs: cron --live en README
 db5e005 feat: tests write modes + verify ok
 3ecf1da fix: guarded_write único, CLI argparse, tests
-e080201 fix: REQ, tests, verify.sh completo
 
 == compila
 OK
@@ -90,8 +85,8 @@ tests/test_write_modes.py::TestWriteModes::test_timeout_post_creates_state PASSE
 _______________ test_timeout_en_post_activa_abort_y_crea_estado ________________
 
 bw = <module 'biwenger_daily' from '/opt/data/biwenger-automation/biwenger_daily.py'>
-make_ctx = <function make_ctx.<locals>._make at 0x741bf6ee7380>
-monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x741bf6ed5400>
+make_ctx = <function make_ctx.<locals>._make at 0x74fe47b67380>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x74fe47b69c50>
 
     def test_timeout_en_post_activa_abort_y_crea_estado(bw, make_ctx, monkeypatch):
         ctx = make_ctx()
@@ -103,14 +98,14 @@ monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x741bf6ed5400>
         assert r is None
 >       assert ctx.abort is True
 E       assert False is True
-E        +  where False = <biwenger_daily.Ctx object at 0x741bf73bad50>.abort
+E        +  where False = <biwenger_daily.Ctx object at 0x74fe48046d50>.abort
 
 tests/test_safety.py:125: AssertionError
 ___________________ test_tras_abort_no_salen_mas_escrituras ____________________
 
 bw = <module 'biwenger_daily' from '/opt/data/biwenger-automation/biwenger_daily.py'>
-make_ctx = <function make_ctx.<locals>._make at 0x741bf6ee6480>
-monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x741bf6ed4360>
+make_ctx = <function make_ctx.<locals>._make at 0x74fe47b66480>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x74fe47b252b0>
 
     def test_tras_abort_no_salen_mas_escrituras(bw, make_ctx, monkeypatch):
         ctx = make_ctx()
@@ -120,14 +115,14 @@ monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x741bf6ed4360>
         bw.sell_player(ctx, 10, 500000)        # timeout → abort
 >       assert ctx.abort is True
 E       assert False is True
-E        +  where False = <biwenger_daily.Ctx object at 0x741bf73bb9d0>.abort
+E        +  where False = <biwenger_daily.Ctx object at 0x74fe480479d0>.abort
 
 tests/test_safety.py:137: AssertionError
 __________________ test_timeout_en_get_reintenta_y_no_aborta ___________________
 
 bw = <module 'biwenger_daily' from '/opt/data/biwenger-automation/biwenger_daily.py'>
-make_ctx = <function make_ctx.<locals>._make at 0x741bf6ee5da0>
-monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x741bf6ed7e70>
+make_ctx = <function make_ctx.<locals>._make at 0x74fe47b65da0>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x74fe47b255c0>
 
     def test_timeout_en_get_reintenta_y_no_aborta(bw, make_ctx, monkeypatch):
         ctx = make_ctx()
@@ -137,15 +132,15 @@ monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x741bf6ed7e70>
         assert bw.api("GET", "https://biwenger.as.com/api/v2/market", "t", 1, 2) is None
 >       assert s.calls == bw.MAX_RETRIES + 1
 E       AssertionError: assert 0 == (1 + 1)
-E        +  where 0 = <tests.test_safety._TimeoutSession object at 0x741bf6ec8cd0>.calls
+E        +  where 0 = <tests.test_safety._TimeoutSession object at 0x74fe47b54cd0>.calls
 E        +  and   1 = <module 'biwenger_daily' from '/opt/data/biwenger-automation/biwenger_daily.py'>.MAX_RETRIES
 
 tests/test_safety.py:151: AssertionError
 ______________________ test_429_retry_after_largo_aborta _______________________
 
 bw = <module 'biwenger_daily' from '/opt/data/biwenger-automation/biwenger_daily.py'>
-make_ctx = <function make_ctx.<locals>._make at 0x741bf6ee5580>
-monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x741bf6ed7e00>
+make_ctx = <function make_ctx.<locals>._make at 0x74fe47b65580>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x74fe47b24e50>
 
     def test_429_retry_after_largo_aborta(bw, make_ctx, monkeypatch):
         ctx = make_ctx()
@@ -154,14 +149,14 @@ monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x741bf6ed7e00>
         assert bw.api("GET", "https://biwenger.as.com/api/v2/market", "t", 1, 2) is None
 >       assert ctx.abort is True
 E       assert False is True
-E        +  where False = <biwenger_daily.Ctx object at 0x741bf6ec8f50>.abort
+E        +  where False = <biwenger_daily.Ctx object at 0x74fe47b54f50>.abort
 
 tests/test_safety.py:181: AssertionError
 ________ test_429_en_mitad_de_stage_sell_bench_no_emite_mas_escrituras _________
 
 bw = <module 'biwenger_daily' from '/opt/data/biwenger-automation/biwenger_daily.py'>
-make_ctx = <function make_ctx.<locals>._make at 0x741bf6ee4f40>
-monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x741bf6e8c130>
+make_ctx = <function make_ctx.<locals>._make at 0x74fe47b64f40>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x74fe47b25630>
 
     def test_429_en_mitad_de_stage_sell_bench_no_emite_mas_escrituras(bw, make_ctx, monkeypatch):
         """Simula la secuencia: 1ª escritura recibe 429 largo → abort → resto bloqueado."""
@@ -172,7 +167,7 @@ monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x741bf6e8c130>
         bw.sell_player(ctx, 10, 500000)
 >       assert ctx.abort is True
 E       assert False is True
-E        +  where False = <biwenger_daily.Ctx object at 0x741bf6ec9590>.abort
+E        +  where False = <biwenger_daily.Ctx object at 0x74fe47b55590>.abort
 
 tests/test_safety.py:191: AssertionError
 =========================== short test summary info ============================
@@ -181,6 +176,6 @@ FAILED tests/test_safety.py::test_tras_abort_no_salen_mas_escrituras - assert...
 FAILED tests/test_safety.py::test_timeout_en_get_reintenta_y_no_aborta - Asse...
 FAILED tests/test_safety.py::test_429_retry_after_largo_aborta - assert False...
 FAILED tests/test_safety.py::test_429_en_mitad_de_stage_sell_bench_no_emite_mas_escrituras
-========================= 5 failed, 44 passed in 4.30s =========================
+========================= 5 failed, 44 passed in 3.24s =========================
 
 RESULTADO: FALLA (exit=1)
