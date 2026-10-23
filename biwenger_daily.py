@@ -280,30 +280,6 @@ def resolve_unknown_state(ctx):
         _json.dump(ops, f)
 
 
-def guarded_write(ctx, kind, fn, *args, **kwargs):
-    """Punto único de control para toda escritura.
-    Comprueba, en orden: ctx.abort, modo dry-run, MAX_WRITES, write_count."""
-    if getattr(ctx, "abort", False):
-        log_action("write_aborted", {"kind": kind, "reason": "abort"}, "warning")
-        return False, "aborted"
-    if getattr(ctx, "read_only", False):
-        log_action("read_only_skip", {"kind": kind}, "info")
-        return False, "read_only"
-    if getattr(ctx, "dry_run", False):
-        log_action("dry_run_skip", {"kind": kind}, "info")
-        return False, "dry_run"
-    if getattr(ctx, "write_count", 0) >= MAX_WRITES:
-        log_action("write_limit", {"kind": kind, "limit": MAX_WRITES}, "warning")
-        return False, "write_limit"
-    ctx.write_count += 1
-    try:
-        return fn(*args, **kwargs)
-    except Exception as e:
-        log_action("write_error", {"kind": kind, "error": str(e)}, "error")
-        return False, "error"
-
-# Contexto global para abort
-_CTX = None
 
 
 def set_ctx(ctx):
@@ -560,6 +536,9 @@ def guarded_write(ctx, kind, fn, *args, **kwargs):
     if getattr(ctx, "abort", False):
         log_action("write_aborted", {"kind": kind, "reason": "abort"}, "warning")
         return False, "aborted"
+    if getattr(ctx, "read_only", False):
+        log_action("read_only_skip", {"kind": kind}, "info")
+        return False, "read_only"
     if getattr(ctx, "dry_run", False):
         log_action("dry_run_skip", {"kind": kind}, "info")
         return False, "dry_run"
@@ -1533,12 +1512,18 @@ def run(probe_only=False, live=False):
 
 
 if __name__ == "__main__":
-    if "--dry-run" in sys.argv:
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--live", action="store_true")
+    parser.add_argument("--probe", action="store_true")
+    args = parser.parse_args()
+    if args.dry_run:
         DRY_RUN = True
-    if "--live" in sys.argv:
+    if args.live:
         DRY_RUN = False
     try:
-        sys.exit(run(probe_only="--probe" in sys.argv, live="--live" in sys.argv))
+        sys.exit(run(probe_only=args.probe, live=args.live))
     except ValueError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(1)
