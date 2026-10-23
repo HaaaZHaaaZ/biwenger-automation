@@ -193,58 +193,37 @@ FORMATIONS = [
 # ──────────────────────────────────────────────────────────
 
 def log_action(action_type, details, status="info"):
-    """Registra una acción en el log JSON (rotado) y en el TXT."""
+    """Registra una acción en el log JSON (rotado) y en el TXT. Escritura atómica + lock."""
+    import fcntl
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     entry = {"timestamp": timestamp, "action": action_type, "status": status, "details": details}
-    logs = []
-    if os.path.exists(LOG_FILE):
-        try:
-            with open(LOG_FILE, "r", encoding="utf-8") as f:
-                logs = json.load(f)
-        except (OSError, ValueError):
-            logs = []
-    logs.append(entry)
-    logs = logs[-MAX_LOG_ENTRIES:]
     try:
-        with open(LOG_FILE, "w", encoding="utf-8") as f:
-            json.dump(logs, f, indent=2, ensure_ascii=False)
+        if os.path.dirname(LOG_FILE):
+            os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+        with open(LOG_FILE, "a+", encoding="utf-8") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            f.seek(0)
+            try:
+                logs = json.load(f)
+            except (OSError, ValueError):
+                logs = []
+            logs.append(entry)
+            logs = logs[-MAX_LOG_ENTRIES:]
+            tmp = LOG_FILE + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as tf:
+                json.dump(logs, tf, indent=2, ensure_ascii=False)
+                tf.flush()
+                os.fsync(tf.fileno())
+            os.replace(tmp, LOG_FILE)
+            fcntl.flock(f, fcntl.LOCK_UN)
         if os.path.exists(LOG_TXT_FILE) and os.path.getsize(LOG_TXT_FILE) > 2_000_000:
             os.replace(LOG_TXT_FILE, LOG_TXT_FILE + ".1")
         with open(LOG_TXT_FILE, "a", encoding="utf-8") as f:
-            f.write(f"[{timestamp}] [{status.upper()}] {action_type}: "
-                    f"{json.dumps(details, ensure_ascii=False, default=str)}\n")
+            f.write("[" + timestamp + "] [" + status.upper() + "] " + action_type + ": " +
+                    json.dumps(details, ensure_ascii=False, default=str) + "\n")
     except OSError:
         pass
     return entry
-
-
-def log_print(msg):
-    print(msg)
-    try:
-        with open(LOG_TXT_FILE, "a", encoding="utf-8") as f:
-            f.write(f"  {msg}\n")
-    except OSError:
-        pass
-
-
-# ──────────────────────────────────────────────────────────
-# Capa HTTP
-# ──────────────────────────────────────────────────────────
-
-class RateLimited(Exception):
-    pass
-
-
-class OldVersion(Exception):
-    pass
-
-
-class AuthError(Exception):
-    pass
-
-
-REQ = {"count": 0}
-
 
 def get_headers(token=None, league_id=None, user_id=None):
     h = {
