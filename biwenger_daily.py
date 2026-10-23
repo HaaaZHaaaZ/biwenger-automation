@@ -160,8 +160,6 @@ ACCEPT_MACHINE_MIN = env_float("BIWENGER_ACCEPT_MACHINE_MIN", 0.92)
 MAX_TEAM_SIZE = env_int("BIWENGER_MAX_TEAM_SIZE", 16)
 
 BAD_STATUS = {"injured", "suspended", "sanctioned"}
-# Sistema de puntuación de la liga (as | sofascore | stats | social | media | feeberse | personalizado)
-SCORE_SYSTEM = env_str("BIWENGER_SCORE_SYSTEM", "as").lower()
 POS_NAMES = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
 
 # Multiplicador por estado real del jugador. 0.0 = no puede puntuar.
@@ -268,8 +266,6 @@ def api(method, url, token=None, league_id=None, user_id=None, body=None):
     headers = get_headers(token, league_id, user_id)
     for attempt in range(MAX_RETRIES + 1):
         REQ["count"] += 1
-        if REQ["count"] >= 10:
-            print(f"     ⚠️ Petición #{REQ['count']} — acercándose al límite del servidor")
         try:
             r = requests.request(method, url, headers=headers, json=body, timeout=REQUEST_TIMEOUT)
         except requests.RequestException as e:
@@ -576,17 +572,6 @@ def score_player(cp, diff_rating, p_start=None, is_home=None):
     easy = 0.5 if diff_rating is None else (100.0 - float(diff_rating)) / 100.0
 
     base = 0.35 * season_avg + 0.35 * fit_avg + 3.0 * 0.30 * easy
-
-    # Bonus por sistema de puntuación "estadísticas": premia acciones defensivas
-    # que acumulan puntos en ese sistema (portería a cero, recuperaciones, paradas)
-    if SCORE_SYSTEM == "stats":
-        pos = cp.get("position", 0)
-        if pos == 1:      # GK: portería a cero +3, paradas +1
-            base *= 1.15
-        elif pos == 2:    # DEF: portería a cero +3, recuperaciones +0.5
-            base *= 1.10
-        elif pos == 3:    # MID: portería a cero +1, precisión de pase +3
-            base *= 1.05
     score = base * mult * p_start
     loc = ""
     if is_home is not None:
@@ -1136,13 +1121,23 @@ def stage_lineup(ctx):
         return
     ok, resp = set_lineup(ctx, ctx.opt_ids, ctx.opt_type, ctx.captain_id, ctx.striker_id)
     if ok:
-        print(f"     ✅ Alineación actualizada a {ctx.opt_type}")
+        out_ids = [i for i in ctx.lineup_ids if i not in ctx.opt_ids]
+        in_ids = [i for i in ctx.opt_ids if i not in ctx.lineup_ids]
+        out_names = [ctx.pool.get(i, {}).get("name", str(i)) for i in out_ids]
+        in_names = [ctx.pool.get(i, {}).get("name", str(i)) for i in in_ids]
+        diff_txt = ""
+        if out_names or in_names:
+            diff_txt = " | Salen: " + ", ".join(out_names) if out_names else ""
+            if in_names:
+                diff_txt += " | Entran: " + ", ".join(in_names)
+        print(f"     ✅ Alineación actualizada a {ctx.opt_type}{diff_txt}")
         ctx.write_count += 1
         ctx.act("lineup_set", formation=ctx.opt_type, players=ctx.opt_ids,
-                captain=ctx.captain_id, striker=ctx.striker_id)
+                captain=ctx.captain_id, striker=ctx.striker_id,
+                out=out_names, entr=in_names)
         log_action("lineup_set", {"formation": ctx.opt_type, "total": best_total, "gain_pct": round(gain_pct, 2),
                                   "players": ctx.opt_ids, "captain": ctx.captain_id,
-                                  "striker": ctx.striker_id}, "success")
+                                  "striker": ctx.striker_id, "out": out_names, "in": in_names}, "success")
     else:
         print(f"     ❌ Error alineación: {resp}")
         ctx.act("lineup_failed", reason=str(resp))
@@ -1216,7 +1211,18 @@ def save_outputs(ctx, now):
     for a in ctx.actions:
         tpl = labels.get(a["type"])
         try:
-            todo.append(tpl.format(**a) if tpl else f"• {a['type']}: {a}")
+            msg = tpl.format(**a) if tpl else f"• {a['type']}: {a}"
+            if a["type"] == "lineup_set":
+                out = a.get("out") or []
+                entr = a.get("entr") or []
+                if out or entr:
+                    parts = []
+                    if out:
+                        parts.append("Salen: " + ", ".join(out))
+                    if entr:
+                        parts.append("Entran: " + ", ".join(entr))
+                    msg += " (" + " | ".join(parts) + ")"
+            todo.append(msg)
         except (KeyError, ValueError):
             todo.append(f"• {a['type']}")
     if not ctx.actions:
