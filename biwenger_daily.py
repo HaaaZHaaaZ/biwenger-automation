@@ -1572,6 +1572,21 @@ def run(probe_only=False, live=False):
         free_sales, own_sales = get_market(ctx)
         ctx.my_sale_ids = {(s.get("player") or {}).get("id") for s in own_sales}
         ctx.free_market = build_free_market(ctx, free_sales)
+
+        # Mostrar jugadores actualmente en venta (propias)
+        if own_sales:
+            print(f"  📋 Jugadores actualmente en venta ({len(own_sales)}):")
+            for s in own_sales:
+                p = s.get("player") or {}
+                pid = p.get("id")
+                price = s.get("price", 0)
+                cp = ctx.catalog.get(str(pid)) if pid else None
+                name = cp.get("name", f"id={pid}") if cp else p.get("name", f"id={pid}")
+                score = "?"
+                print(f"     - {name} (id={pid}) · €{price:,}")
+        else:
+            print(f"  📋 Jugadores actualmente en venta: 0")
+
         print(f"  Mercado: {len(free_sales)} libres · {len(own_sales)} propias · "
               f"{len(ctx.offers)} ofertas en total")
 
