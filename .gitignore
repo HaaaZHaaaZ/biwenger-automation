@@ -12,7 +12,7 @@ __pycache__/
 venv/
 env/
 
-# Logs
+# Logs and state
 *.log
 biwenger_log.json
 biwenger_log.txt
@@ -22,8 +22,12 @@ biwenger_todo.md
 # Worktrees (isolated workspaces for plan execution)
 .worktrees/
 
+# Audit and local tooling
+.hermes/
+.pytest_cache/
+VERIFY_OUTPUT.txt
+README.md.bak
+
 # OS
 .DS_Store
 Thumbs.db
-.hermes/
-README.md.bak

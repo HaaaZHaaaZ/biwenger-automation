@@ -11,6 +11,7 @@
 
 ## 📑 Tabla de contenidos
 
+- [Novedades v14.0](#-novedades-v140)
 - [Novedades v13.5](#-novedades-v135)
 - [Características](#-características)
 - [Instalación](#-instalación)
@@ -28,8 +29,10 @@
 
 ## 🆕 Novedades v14.0
 
-- **Modularización completa**: `biwenger_daily.py` (1.787 líneas) dividido en paquete `biwenger/` con 8 módulos especializados.
-- **Tests**: 72 tests pasando (TDD obligatorio por módulo).
+- **Modularización completa**: `biwenger_daily.py` (1.787 líneas) dividido en paquete `biwenger/` con 8 módulos especializados (config, model, utils, api, writes, scoring, stages, cli) + `version.py`.
+- **Tests**: 75 tests pasando (TDD obligatorio por módulo). Incluye tests de concurrencia y persistencia de estado incierto.
+- **Versión centralizada**: `biwenger/version.py` es la única fuente de verdad. Cambiar `__version__` actualiza toda la aplicación.
+- **Auditoría de seguridad**: independiente, con informe en `SECURITY_AUDIT.md`. Incluye manejo de HTTP 5xx, lock de instancia, estado incierto, y dependencias con hashes.
 - **Entry point preservado**: `biwenger_daily.py` sigue siendo el entry point del cron, re-exportando todo desde `biwenger/`.
 - **Compatibilidad total**: tests que parchean globals (`_CTX`, `_SESSION`, `api`) siguen funcionando vía accessors en runtime.
 
@@ -112,6 +115,8 @@ python3 biwenger_daily.py --probe
 
 `verify.sh` devuelve exit code ≠ 0 si falla la compilación, el grep detecta escrituras fuera de `guarded_write`, o falla algún test. La salida completa queda en `VERIFY_OUTPUT.txt`.
 
+**75 tests** cubren: seguridad (abort, read_only, dry_run, límites), timeouts, HTTP 429, concurrencia, persistencia de estado incierto, config, model, scoring, utils.
+
 ---
 
 ## 📚 Documentación detallada
@@ -126,20 +131,37 @@ python3 biwenger_daily.py --probe
 
 ```
 biwenger-automation/
-├── biwenger_daily.py      # Script principal
+├── biwenger_daily.py      # Entry point (re-exporta desde biwenger/)
+├── biwenger/              # Paquete modular
+│   ├── __init__.py        # Re-exports
+│   ├── version.py         # Única fuente de verdad de versión
+│   ├── config.py          # Constantes y env helpers
+│   ├── model.py           # Ctx, excepciones, globals
+│   ├── utils.py           # Logging, headers, unknown state, lock
+│   ├── api.py             # HTTP client + GET endpoints
+│   ├── writes.py          # guarded_write + operaciones de escritura
+│   ├── scoring.py         # Scoring, lineup, mercado
+│   ├── stages.py          # 6 etapas del pipeline
+│   └── cli.py             # probe, save_outputs, run, main
 ├── .env.example           # Plantilla de credenciales
 ├── .env                   # ⚠️ Tus credenciales (NO se sube)
 ├── .gitignore             # Archivos ignorados
 ├── requirements.txt       # Dependencias de ejecución
 ├── requirements-dev.txt   # Dependencias de test (pytest)
+├── requirements-lock.txt  # Dependencias fijadas con hashes
 ├── verify.sh              # Verificación de cierre
-├── VERIFY_OUTPUT.txt      # Salida de la última verificación
 ├── README.md              # Documentación
-├── tests/                 # Suite pytest
+├── SECURITY_AUDIT.md      # Auditoría de seguridad
+├── tests/                 # Suite pytest (75 tests)
 │   ├── conftest.py
-│   ├── test_safety.py
 │   ├── test_abort.py
+│   ├── test_config.py
+│   ├── test_concurrency.py
 │   ├── test_guarded.py
+│   ├── test_model.py
+│   ├── test_safety.py
+│   ├── test_scoring.py
+│   ├── test_utils.py
 │   └── test_write_modes.py
 └── docs/                  # Documentación detallada
     ├── environment.md
