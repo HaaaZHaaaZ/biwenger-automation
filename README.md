@@ -1,17 +1,17 @@
-# ⚽ Biwenger Auto-Trader v13.4
+# ⚽ Biwenger Auto-Trader v13.5
 
 > Automatización inteligente del juego Biwenger vía API REST — login, mercado, alineación, ofertas y más.
 
 ![Python](https://img.shields.io/badge/python-3.9+-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Status](https://img.shields.io/badge/status-production-brightgreen.svg)
-![Version](https://img.shields.io/badge/version-13.4-blue.svg)
+![Version](https://img.shields.io/badge/version-13.5-blue.svg)
 
 ---
 
 ## 📑 Tabla de contenidos
 
-- [Novedades v13.4](#-novedades-v134)
+- [Novedades v13.5](#-novedades-v135)
 - [Características](#-características)
 - [Instalación](#-instalación)
 - [Uso](#-uso)
@@ -23,6 +23,14 @@
 - [Diseñado para agentes de IA](#-diseñado-para-agentes-de-ia)
 - [Pendiente](#-pendiente)
 - [Licencia](#-licencia)
+
+---
+
+## 🆕 Novedades v13.5
+
+- **Ofertas en ventas propias.** Nueva etapa `stage_process_own_sale_offers()` que procesa ofertas de compradores externos sobre jugadores que ya tenemos en venta. Antes se ignoraban, dejando dinero en la mesa y cupo bloqueado.
+- **Mismos umbrales** que ofertas recibidas: ≥125% acepta directo, ≥110% acepta normal, ≥90% si el jugador está lesionado.
+- **Recompute automático** tras aceptar: actualiza saldo, squad y alineación sin esperar a la siguiente corrida.
 
 ---
 
