@@ -17,6 +17,9 @@ class TestGuarded(unittest.TestCase):
         res = bd.sell_player(ctx, 1, 100)
         self.assertEqual(called["n"], 0)
         self.assertEqual(res[1], "aborted")
+        # Restore api
+        from biwenger.api import api as _real_api
+        bd.api = _real_api
 
 if __name__ == "__main__":
     unittest.main()

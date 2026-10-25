@@ -19,6 +19,17 @@ import pytest  # noqa: E402
 bw_module = importlib.import_module("biwenger_daily")
 
 
+@pytest.fixture(autouse=True)
+def _reset_globals():
+    """Reset module-level globals before each test for isolation."""
+    bw_module._CTX = None
+    bw_module._SESSION = None
+    bw_module._WAITED = 0
+    bw_module._WAIT_BUDGET = 90
+    bw_module.REQ = {"count": 0}
+    yield
+
+
 @pytest.fixture
 def bw(tmp_path, monkeypatch):
     """Módulo con todas las rutas redirigidas a un directorio temporal por test."""
