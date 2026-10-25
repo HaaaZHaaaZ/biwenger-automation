@@ -32,8 +32,6 @@
 - **Mismos umbrales** que ofertas recibidas: ≥125% acepta directo, ≥110% acepta normal, ≥90% si el jugador está lesionado.
 - **Recompute automático** tras aceptar: actualiza saldo, squad y alineación sin esperar a la siguiente corrida.
 
----
-
 ## 🆕 Novedades v13.4
 
 - **Informe detallado de ejecución.** Al final de cada run el script imprime por stdout un informe completo: estado de cuenta, plantilla puntuada por posiciones (GK/DEF/MID/FWD), acciones (ofertas recibidas, ventas, compras, alineación), resumen (acciones/writes/peticiones) e incidencias. Diseñado para entrega directa por Telegram (el cron lo envía).
