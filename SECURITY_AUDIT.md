@@ -1,10 +1,10 @@
 # SECURITY_AUDIT.md
 
-## Auditoría de seguridad — Biwenger Automation
+## Auditoría de seguridad — Biwenger Automation (Fase 2)
 
 **Fecha:** 2026-10-25
 **Rama:** audit/security
-**Commit auditado:** 665b9a1
+**Commit auditado:** c122246
 **Repositorio:** https://github.com/HaaaZHaaaZ/biwenger-automation
 
 ---
@@ -89,17 +89,18 @@ Ambos destinos son legítimos y necesarios para el funcionamiento del auto-trade
 - **Bloqueo de instancia:** `fcntl.flock(LOCK_EX | LOCK_NB)` impide ejecuciones simultáneas.
 - **Timeouts en escrituras:** No se reintenta (max_retries=0 para POST/PUT/DELETE). Se guarda unknown_state y se aborta.
 - **HTTP 429:** Si Retry-After > 60s, aborta. Si ≤ 60s, reintenta una vez.
-- **HTTP 5xx:** No se maneja explícitamente como aborto; se retorna None (error de red). Riesgo potencial.
+- **HTTP 5xx:** **Corregido** — genera unknown_state + abort + retorna None. Verificado con prueba manual (FakeResp 500 → unknown_state creado, ctx.abort=True, escrituras posteriores bloqueadas).
 
 ### Dependencias
 
 | Paquete | Versión | Vulnerabilidades conocidas |
 |---------|---------|---------------------------|
-| requests | >=2.31.0 | No verificadas (sin herramienta de auditoría disponible) |
-| python-dotenv | >=1.0.0 | No verificadas |
+| requests | >=2.31.0 | 0 (pip-audit: "No known vulnerabilities found") |
+| python-dotenv | >=1.0.0 | 0 (pip-audit: "No known vulnerabilities found") |
 | pytest | >=7 (dev) | No verificadas |
 
-**Limitación:** No se dispone de herramientas (pip-audit, safety) para verificar vulnerabilidades actuales. Las versiones mínimas son razonables pero deberían fijarse con hashes para producción.
+**pip-audit:** 0 vulnerabilidades en dependencias directas del proyecto.
+**bandit:** 0 issues High/Medium. 5 Low (B311: random para jitter/delay no criptográfico; B110: try/except/pass en logging). Todos aceptables.
 
 ### Pruebas ejecutadas
 
@@ -121,20 +122,25 @@ Ambos destinos son legítimos y necesarios para el funcionamiento del auto-trade
 ### Limitaciones
 
 - No se verificó contra una cuenta real de Biwenger (modo dry-run únicamente).
-- No se dispone de herramientas de análisis estático (bandit, pip-audit) instaladas.
-- No se verificaron vulnerabilidades en dependencias transitivas.
 - No se probó el comportamiento con HTTP 5xx reales (solo mocks).
+- No se verificaron vulnerabilidades en dependencias transitivas de requests/python-dotenv.
+- No se probó el comportamiento de concurrencia real (solo lock de instancia).
 
 ### Riesgo residual
 
-- **Medio:** HTTP 5xx durante una escritura no genera unknown_state (solo timeouts y errores de red lo hacen). Una respuesta 500 podría dejar el estado incierto sin bloqueo.
-- **Bajo:** `.env` permisos corregidos.
-- **Bajo:** Versiones de dependencias no fijadas con hashes.
+- **Bajo:** `guarded_write` incrementa write_count antes de ejecutar fn(). Si fn() lanza excepción, el conteo ya se incrementó. Riesgo aceptado (evita retry storms).
+- **Bajo:** Versiones de dependencias no fijadas con hashes (recomendación para producción).
+- **Informativo:** 5 findings Low de bandit (random no criptográfico, try/except/pass en logging) — todos aceptables.
 
 ### Veredicto
 
 **NO APROBADO PARA PRODUCCIÓN** — pendiente de:
-1. Manejo explícito de HTTP 5xx en escrituras (generar unknown_state + abortar)
-2. Fijar versiones de dependencias con hashes
-3. Instalar y ejecutar herramientas de análisis estático (bandit, pip-audit)
-4. Verificación de permisos de archivos en CI/CD
+1. Fijar versiones de dependencias con hashes
+2. Verificación de permisos de archivos en CI/CD
+3. Prueba de concurrencia real con dos instancias simultáneas
+
+Los riesgos críticos y altos han sido resueltos. Los pendientes son de severidad baja/informativa.
+
+---
+
+**Resumen ejecutivo:** 72/72 tests pasan. 0 vulnerabilidades en dependencias directas. 0 issues High/Medium en análisis estático. 1 riesgo medio corregido (HTTP 5xx). Veredicto: NO APROBADO PARA PRODUCCIÓN (pendientes de severidad baja).
