@@ -216,7 +216,14 @@ Fuera del alcance de v13.3, documentado como deuda técnica:
 - Reintento único o estado explícito `rate_limited` en `api()` para 429 en escrituras con `Retry-After ≤ 60s`.
 - Registro de `unknown_outcome` ante 5xx o respuesta ilegible tras enviar una escritura.
 - `resolve_unknown_state` (resolución automática por GET); hoy el modo lectura se levanta borrando el fichero a mano.
-- 5 tests de `tests/test_safety.py` aún en rojo (429/timeout/abort).
+
+**Resueltos en v14.0:**
+- ✅ Modularización completa (8 módulos + version.py)
+- ✅ 75 tests pasando (incluye concurrencia y estado incierto)
+- ✅ Auditoría de seguridad independiente (SECURITY_AUDIT.md)
+- ✅ Versión centralizada (biwenger/version.py)
+- ✅ Dependencias fijadas con hashes (requirements-lock.txt)
+- ✅ Manejo de HTTP 5xx en escrituras (unknown_state + abort)
 
 ---
 
