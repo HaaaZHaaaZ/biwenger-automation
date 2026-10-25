@@ -1,11 +1,11 @@
-# ⚽ Biwenger Auto-Trader v13.5
+# ⚽ Biwenger Auto-Trader v14.0
 
 > Automatización inteligente del juego Biwenger vía API REST — login, mercado, alineación, ofertas y más.
 
 ![Python](https://img.shields.io/badge/python-3.9+-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Status](https://img.shields.io/badge/status-production-brightgreen.svg)
-![Version](https://img.shields.io/badge/version-13.5-blue.svg)
+![Version](https://img.shields.io/badge/version-14.0-blue.svg)
 
 ---
 
@@ -25,6 +25,13 @@
 - [Licencia](#-licencia)
 
 ---
+
+## 🆕 Novedades v14.0
+
+- **Modularización completa**: `biwenger_daily.py` (1.787 líneas) dividido en paquete `biwenger/` con 8 módulos especializados.
+- **Tests**: 72 tests pasando (TDD obligatorio por módulo).
+- **Entry point preservado**: `biwenger_daily.py` sigue siendo el entry point del cron, re-exportando todo desde `biwenger/`.
+- **Compatibilidad total**: tests que parchean globals (`_CTX`, `_SESSION`, `api`) siguen funcionando vía accessors en runtime.
 
 ## 🆕 Novedades v13.5
 

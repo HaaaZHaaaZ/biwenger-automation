@@ -19,6 +19,9 @@ biwenger_log.txt
 biwenger_state.json
 biwenger_todo.md
 
+# Worktrees (isolated workspaces for plan execution)
+.worktrees/
+
 # OS
 .DS_Store
 Thumbs.db
