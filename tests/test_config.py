@@ -7,7 +7,7 @@ def test_constants_present():
         MAX_WRITES, MAX_BUYS, MAX_SELLS, MIN_SQUAD, MAX_SQUAD,
         STATUS_MULT, FORMATIONS, BAD_STATUS, POS_NAMES, SQUAD_FIELDS,
     )
-    assert VERSION == "13.4"
+    assert VERSION == "14.0"
     assert isinstance(MAX_WRITES, int) and MAX_WRITES > 0
     assert isinstance(MAX_BUYS, int)
     assert isinstance(MAX_SELLS, int)
