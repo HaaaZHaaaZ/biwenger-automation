@@ -1,10 +1,10 @@
 # SECURITY_AUDIT.md
 
-## Auditoría de seguridad — Biwenger Automation (Fase 2)
+## Auditoría de seguridad — Biwenger Automation (Fase 3)
 
 **Fecha:** 2026-10-25
 **Rama:** audit/security
-**Commit auditado:** c122246
+**Commit auditado:** 98119b2
 **Repositorio:** https://github.com/HaaaZHaaaZ/biwenger-automation
 
 ---
@@ -106,12 +106,17 @@ Ambos destinos son legítimos y necesarios para el funcionamiento del auto-trade
 
 | Suite | Resultado |
 |-------|-----------|
-| `pytest -v` (72 tests) | 72 passed, 0 failed |
+| `pytest -v` (74 tests) | 74 passed, 0 failed |
 | `test_timeout_en_post_activa_abort_y_crea_estado` | PASSED |
 | `test_tras_abort_no_salen_mas_escrituras` | PASSED |
 | `test_timeout_en_get_reintenta_y_no_aborta` | PASSED |
 | `test_429_retry_after_largo_aborta` | PASSED |
 | `test_429_en_mitad_de_stage_sell_bench_no_emite_mas_escrituras` | PASSED |
+| Prueba manual HTTP 5xx (FakeResp 500) | PASSED (unknown_state creado, abort activado, escrituras bloqueadas) |
+| test_concurrency_lock | PASSED (solo un proceso obtiene el lock) |
+| test_uncertain_state_blocks_writes | PASSED (estado incierto → read_only, escrituras bloqueadas) |
+| Instalación desde requirements-lock.txt en venv limpio (Python 3.13) | PASSED |
+| pip-audit (requirements-lock.txt) | 0 vulnerabilidades |
 
 ### Cambios realizados durante la auditoría
 
@@ -143,4 +148,4 @@ Los riesgos críticos y altos han sido resueltos. Los pendientes son de severida
 
 ---
 
-**Resumen ejecutivo:** 72/72 tests pasan. 0 vulnerabilidades en dependencias directas. 0 issues High/Medium en análisis estático. 1 riesgo medio corregido (HTTP 5xx). Veredicto: NO APROBADO PARA PRODUCCIÓN (pendientes de severidad baja).
+**Resumen ejecutivo:** 74/74 tests pasan. 0 vulnerabilidades en dependencias directas (pip-audit). 0 issues High/Medium en análisis estático (bandit). 1 riesgo medio corregido (HTTP 5xx). Concurrencia y persistencia de estado incierto verificadas. Lock file con hashes verificado. Veredicto: NO APROBADO PARA PRODUCCIÓN (pendientes de severidad baja).
