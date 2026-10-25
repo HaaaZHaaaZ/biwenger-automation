@@ -97,6 +97,16 @@ def api(method, url, token=None, league_id=None, user_id=None, body=None):
             raise model.AuthError(url)
         if r.status_code == 400 and "old version" in (r.text or "").lower():
             raise model.OldVersion(url)
+        # HTTP 5xx during write → uncertain result, abort and save unknown state
+        if is_write and r.status_code >= 500:
+            if "/auth/login" not in url:
+                save_unknown_state({"type": "unknown", "method": method, "url": url,
+                                    "payload": _summarize_body(body), "timestamp": __import__("datetime").datetime.now().isoformat()})
+            ctx = model._get_CTX()
+            if ctx is not None:
+                ctx.abort = True
+            log_action("server_error_write", {"method": method, "url": url, "status": r.status_code}, "error")
+            return None
         return r
     return None
 
