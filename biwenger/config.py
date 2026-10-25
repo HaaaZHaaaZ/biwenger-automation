@@ -1,7 +1,7 @@
 """Biwenger config — todas las constantes y helpers de entorno."""
 import os
 
-VERSION = "14.0"
+from biwenger.version import __version__ as VERSION
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 

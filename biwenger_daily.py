@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Biwenger Auto-Trader v13.5
+Biwenger Auto-Trader
 ==========================
 Entry point que re-exporta todo desde biwenger/ para compatibilidad con tests y cron.
 """

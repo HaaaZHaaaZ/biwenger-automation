@@ -7,7 +7,8 @@ def test_constants_present():
         MAX_WRITES, MAX_BUYS, MAX_SELLS, MIN_SQUAD, MAX_SQUAD,
         STATUS_MULT, FORMATIONS, BAD_STATUS, POS_NAMES, SQUAD_FIELDS,
     )
-    assert VERSION == "14.0"
+    from biwenger.version import __version__
+    assert VERSION == __version__
     assert isinstance(MAX_WRITES, int) and MAX_WRITES > 0
     assert isinstance(MAX_BUYS, int)
     assert isinstance(MAX_SELLS, int)
@@ -19,6 +20,15 @@ def test_constants_present():
     assert "injured" in BAD_STATUS
     assert POS_NAMES[1] == "GK"
     assert "players(id)," in SQUAD_FIELDS
+
+
+def test_version_consistency():
+    from biwenger.version import __version__
+    from biwenger.config import VERSION
+    from biwenger import __version__ as pkg_version
+    assert VERSION == __version__
+    assert pkg_version == __version__
+    assert __version__ == "14.0"
 
 def test_env_helpers():
     from biwenger.config import env_str, env_int, env_float, env_bool

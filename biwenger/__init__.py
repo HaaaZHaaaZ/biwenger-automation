@@ -4,6 +4,8 @@ biwenger_daily.py imports everything from here so that monkeypatch.setattr(bw, "
 works for any code that accesses api via biwenger_daily.api.
 The actual implementations live in biwenger.{config,model,utils,api,writes,scoring,stages,cli}.
 """
+from biwenger.version import __version__
+
 from biwenger.config import *
 from biwenger.model import *
 from biwenger.utils import *
