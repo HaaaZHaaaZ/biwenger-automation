@@ -116,6 +116,7 @@ Ambos destinos son legítimos y necesarios para el funcionamiento del auto-trade
 
 1. **`.env` permisos:** 644 → 600 (protección de credenciales)
 2. **`tests/test_config.py`:** VERSION assertion actualizada de "13.4" a "14.0" (consistencia con bump de versión)
+3. **`biwenger/api.py`:** HTTP 5xx durante escritura ahora genera unknown_state + abort (corrección de riesgo medio)
 
 ### Limitaciones
 
