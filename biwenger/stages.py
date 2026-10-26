@@ -4,6 +4,7 @@ from biwenger import model
 from biwenger.utils import log_action
 from biwenger.writes import sell_player, answer_offer, create_purchase_offer, set_lineup, retract_offer
 from biwenger.scoring import (
+    choose_captain_and_striker,
     build_smart_lineup, offer_player_ids, lineup_is_complete,
     build_free_market
 )
@@ -15,6 +16,56 @@ from biwenger.config import (
     ACCEPT_NORMAL, ACCEPT_HIGH, ACCEPT_INJURED, MAX_DROP_PCT,
     ACCEPT_MACHINE_MIN, MAX_TEAM_SIZE, SELL_SCORE_MIN
 )
+
+
+def _log_current_state(ctx, stage_name: str):
+    """Snapshot de estado para auditoría antes de procesar ofertas."""
+    print(f"\n  📋 Estado actual [{stage_name}]:")
+    # Alineación óptima
+    opt_names = [ctx.pool[pid]['name'] for pid in ctx.opt_ids if pid in ctx.pool]
+    print(f"     Alineación óptima ({len(ctx.opt_ids)}): {opt_names}")
+    # Ventas activas
+    sale_names = [ctx.catalog.get(str(pid), {}).get('name', f'id={pid}') for pid in ctx.my_sale_ids]
+    print(f"     Ventas activas ({len(ctx.my_sale_ids)}): {sale_names}")
+    # Pujas propias pendientes (compra)
+    own_buy_offers = [o for o in ctx.offers
+                      if o.get("status") == "waiting"
+                      and (o.get("to") or {}).get("id") is None
+                      and (o.get("from") or {}).get("id") == ctx.user_id]
+    own_buy_desc = []
+    for o in own_buy_offers:
+        pids = offer_player_ids(o)
+        if pids:
+            pid = pids[0]
+            name = ctx.catalog.get(str(pid), {}).get('name', '?')
+            own_buy_desc.append(f"{name} €{o.get('amount', 0):,}")
+    print(f"     Pujas propias pendientes ({len(own_buy_offers)}): {own_buy_desc}")
+    # Ofertas recibidas (otros usuarios ofertando por nuestros jugadores)
+    received_offers = [o for o in ctx.offers
+                       if o.get("status") == "waiting"
+                       and (o.get("to") or {}).get("id") == ctx.user_id
+                       and (o.get("from") or {}).get("id") is None]
+    received_desc = []
+    for o in received_offers:
+        pids = offer_player_ids(o)
+        if pids:
+            pid = pids[0]
+            name = ctx.catalog.get(str(pid), {}).get('name', '?')
+            received_desc.append(f"{name} €{o.get('amount', 0):,}")
+    print(f"     Ofertas recibidas ({len(received_offers)}): {received_desc}")
+    # Ofertas en nuestras ventas (compradores ofertando por lo que vendemos)
+    own_sale_offers = [o for o in ctx.offers
+                       if o.get("status") == "waiting"
+                       and (o.get("from") or {}).get("id") == ctx.user_id
+                       and (o.get("to") or {}).get("id") != ctx.user_id]
+    own_sale_desc = []
+    for o in own_sale_offers:
+        pids = offer_player_ids(o)
+        if pids:
+            pid = pids[0]
+            name = ctx.catalog.get(str(pid), {}).get('name', '?')
+            own_sale_desc.append(f"{name} €{o.get('amount', 0):,}")
+    print(f"     Ofertas en nuestras ventas ({len(own_sale_offers)}): {own_sale_desc}")
 
 
 def stage_cleanup_offers(ctx):
@@ -66,6 +117,7 @@ def stage_received_offers(ctx):
     if getattr(ctx, "abort", False):
         return
     """Acepta/rechaza ofertas recibidas simulando antes la plantilla resultante."""
+    _log_current_state(ctx, "ofertas_recibidas")
     print("\n  0. Ofertas recibidas:")
     received = [o for o in ctx.offers
                 if o.get("status") == "waiting"
@@ -169,6 +221,7 @@ def stage_received_offers(ctx):
 
 def stage_process_own_sale_offers(ctx):
     """Procesa ofertas recibidas en jugadores que ya tenemos en venta."""
+    _log_current_state(ctx, "ofertas_ventas_propias")
     print("\n  0b. Ofertas en nuestras ventas:")
     if getattr(ctx, "abort", False):
         return
@@ -191,6 +244,12 @@ def stage_process_own_sale_offers(ctx):
         if len(pids) != 1:
             continue
         pid = pids[0]
+        # FIX: Solo procesar ofertas sobre jugadores que tenemos EN VENTA ACTIVA
+        if pid not in ctx.my_sale_ids:
+            cp = ctx.catalog.get(str(pid))
+            name = cp.get("name", f"id={pid}") if cp else f"id={pid}"
+            print(f"     ⏭️  Oferta #{oid} por {name} (id={pid}) — no está en nuestras ventas activas, se omite")
+            continue
         cp = ctx.catalog.get(str(pid))
         if not cp:
             continue
@@ -414,7 +473,7 @@ def stage_lineup(ctx):
         return
 
     if CAPTAIN_KEY or STRIKER_KEY:
-        ctx.captain_id, ctx.striker_id = model.choose_captain_and_striker(ctx.opt_detail)
+        ctx.captain_id, ctx.striker_id = choose_captain_and_striker(ctx.opt_detail)
         nm = lambda i: (ctx.pool.get(i) or {}).get("name", i)
         print(f"     Capitán: {nm(ctx.captain_id)} · Ariete: {nm(ctx.striker_id)}")
 
