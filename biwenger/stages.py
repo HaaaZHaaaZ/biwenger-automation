@@ -497,7 +497,8 @@ def stage_lineup(ctx):
         ctx.act("lineup_skipped", reason=reason, gain_pct=round(gain_pct, 2))
         log_action("lineup_skipped", {"reason": reason, "gain_pct": round(gain_pct, 2),
                                       "current": current_total, "best": best_total}, "info")
-        return
+        if not extras or not ctx.captain_id:
+            return
 
     if not ctx.can_write():
         print("     ⚠️ Límite de escrituras alcanzado — la alineación NO se cambió")

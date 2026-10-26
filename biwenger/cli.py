@@ -10,7 +10,6 @@ import requests
 
 from biwenger import config as cfg
 from biwenger import model
-from biwenger import api
 from biwenger.utils import log_action, acquire_instance_lock, rate_limit_active, set_rate_limit
 from biwenger.writes import set_lineup
 from biwenger.scoring import get_fixture_info, build_free_market, offer_player_ids
@@ -22,7 +21,8 @@ from biwenger.stages import (
 
 def probe(ctx):
     """Vuelca los campos reales de lineup para descubrir cómo guarda Biwenger capitán/ariete."""
-    r = api.api("GET", "https://biwenger.as.com/api/v2/user?fields=*,lineup(*)",
+    from biwenger.api import api as api_call
+    r = api_call("GET", "https://biwenger.as.com/api/v2/user?fields=*,lineup(*)",
             ctx.token, ctx.league_id, ctx.user_id)
     if r is None or r.status_code != 200:
         print(f"❌ Probe falló: {None if r is None else r.status_code}")
@@ -217,13 +217,14 @@ def run(probe_only=False, live=False):
     log_action("run_mode", {"mode": "LIVE" if not DRY_RUN else "DRY-RUN",
                             "read_only": ctx.read_only, "version": cfg.VERSION}, "info")
     ctx.session = requests.Session()
-    api.set_session(ctx.session)
+    from biwenger.api import set_session, login, get_account, get_squad, get_catalog, get_round_name, get_offers, get_market
+    set_session(ctx.session)
     model.set_wait_budget(ctx.wait_budget)
     model.set_ctx(ctx)
     try:
-        ctx.token = cfg.TOKEN or api.login()
+        ctx.token = cfg.TOKEN or login()
         print("✅ Autenticado")
-        (ctx.league_id, ctx.user_id, ctx.balance, ctx.points, ctx.user_name) = api.get_account(ctx.token)
+        (ctx.league_id, ctx.user_id, ctx.balance, ctx.points, ctx.user_name) = get_account(ctx.token)
         print(f"\n--- Account ---\n  {ctx.user_name} | {ctx.points} pts | €{ctx.balance:,} | liga {ctx.league_id}")
 
         if probe_only:
@@ -231,7 +232,7 @@ def run(probe_only=False, live=False):
             return 0
 
         # Datos
-        squad_ids, lineup_info, lineup_players = api.get_squad(ctx)
+        squad_ids, lineup_info, lineup_players = get_squad(ctx)
         if lineup_info is None:
             print("❌ No se pudo obtener la plantilla")
             return 1
@@ -239,7 +240,7 @@ def run(probe_only=False, live=False):
         ctx.lineup_ids = lineup_info.get("playersID") or []
         print(f"  Plantilla: {len(ctx.squad_ids)} jugadores · formación actual {lineup_info.get('type', '?')}")
 
-        ctx.catalog, cat_teams = api.get_catalog(ctx)
+        ctx.catalog, cat_teams = get_catalog(ctx)
         print(f"  Catálogo: {len(ctx.catalog)} jugadores · {len(cat_teams)} equipos")
         if not ctx.catalog:
             print("❌ Sin catálogo: no se actúa")
@@ -247,7 +248,7 @@ def run(probe_only=False, live=False):
             return 1
 
         ctx.diff_map, ctx.games_map, ctx.round_name, kickoffs = get_fixture_info(lineup_players)
-        ctx.round_name = ctx.round_name or api.get_round_name(ctx)
+        ctx.round_name = ctx.round_name or get_round_name(ctx)
         future = [d for d in kickoffs.values() if d >= now - timedelta(hours=3)]
         if future:
             ctx.next_kickoff = min(future)
@@ -261,8 +262,8 @@ def run(probe_only=False, live=False):
             log_action("no_kickoff_dates", {}, "warning")
         print(f"  Dificultad conocida para {len(ctx.diff_map)} equipos")
 
-        ctx.offers = api.get_offers(ctx)
-        free_sales, own_sales = api.get_market(ctx)
+        ctx.offers = get_offers(ctx)
+        free_sales, own_sales = get_market(ctx)
         ctx.my_sale_ids = {(s.get("player") or {}).get("id") for s in own_sales}
         ctx.free_market = build_free_market(ctx, free_sales)
 
