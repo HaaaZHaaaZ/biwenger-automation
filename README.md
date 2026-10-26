@@ -27,6 +27,15 @@
 
 ---
 
+## 🆕 Novedades v14.0.1 (2026-10-26)
+
+- **Fix capitán/ariete**: Campos `captain` y `striker` ahora se persisten correctamente en state.json. Se configuró `BIWENGER_CAPTAIN_KEY=captain` y `BIWENGER_STRIKER_KEY=striker` en `.env`.
+- **Fix probe()**: Corregido conflicto de nombres entre módulo `api` y función `api()` que impedía ejecutar `--probe`.
+- **Fix stage_lineup**: Ahora actualiza capitán/ariete incluso cuando la alineación no cambia (ganancia < 5%).
+- **Filtrado de ofertas**: `stage_process_own_sale_offers` ahora filtra por `ctx.my_sale_ids` para evitar errores 403 procesando ofertas de jugadores no vendidos.
+- **Snapshot de estado**: Nueva función `_log_current_state()` que imprime alineación, ventas activas, pujas y ofertas antes de procesar cada etapa.
+- **MAX_WRITES aumentado**: De 8 a 15 writes por ejecución para permitir alineación completa + ofertas + ventas.
+
 ## 🆕 Novedades v14.0
 
 - **Modularización completa**: `biwenger_daily.py` (1.787 líneas) dividido en paquete `biwenger/` con 8 módulos especializados (config, model, utils, api, writes, scoring, stages, cli) + `version.py`.
