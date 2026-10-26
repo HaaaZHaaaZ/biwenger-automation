@@ -1,4 +1,4 @@
-# ⚽ Biwenger Auto-Trader v14.0
+# ⚽ Biwenger Auto-Trader v14.0.1
 
 > Automatización inteligente del juego Biwenger vía API REST — login, mercado, alineación, ofertas y más.
 
@@ -11,6 +11,7 @@
 
 ## 📑 Tabla de contenidos
 
+- [Novedades v14.0.1](#-novedades-v1401)
 - [Novedades v14.0](#-novedades-v140)
 - [Novedades v13.5](#-novedades-v135)
 - [Características](#-características)
