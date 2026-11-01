@@ -237,8 +237,10 @@ def run(probe_only=False, live=False):
         log_action("auth_error", {}, "error")
         return 3
 
-    save_outputs(ctx, now)
-    print(f"\n  ✅ State: {cfg.STATE_FILE}\n  ✅ Todo:  {cfg.TODO_FILE}")
+    # Entrenamiento automático nocturno
+    if not DRY_RUN and datetime.now().weekday() == 0 and datetime.now().hour == 3:  # lunes 03:00
+        from biwenger.models import train_and_save
+        train_and_save()
     print(f"\n{'=' * 60}\n✅ Ejecución completada — {len(ctx.actions)} acciones, "
           f"{ctx.write_count} writes, {REQ['count']} peticiones\n{'=' * 60}")
     return 0

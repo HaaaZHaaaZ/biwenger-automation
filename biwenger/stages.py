@@ -318,19 +318,18 @@ def stage_sell_bench(ctx):
         bad, low = st in BAD_STATUS, e["score"] < SELL_SCORE_MIN
         if not (bad or low):
             continue
-        if low and not bad and ctx.match_soon:
-            # Opción B: si la alineación ya está cerrada (11 titulares listos),
-            # los suplentes no aportan puntos y no hay riesgo de quedarse corto.
-            lineup_ready = len(ctx.opt_ids) >= 11
-            if lineup_ready and SELL_BENCH_WHEN_LINEUP_READY:
-                print(f"     🔓 {e['name']} (score={e['score']:.3f}) — alineación cerrada, se vende")
-            else:
-                print(f"     ⏸ {e['name']} (score={e['score']:.3f}) — partido cerca y alineación "
-                      f"sin cerrar ({len(ctx.opt_ids)}/11), se mantiene")
-                continue
-        has_repl = any(r["position"] == e["position"] and r["status"] == "ok"
-                       and r["score"] > e["score"] and r["p_start"] >= MIN_P_START_BUY
-                       for r in ctx.free_market)
+        lineup_ready = len(ctx.opt_ids) >= 11
+        if low and not bad and ctx.match_soon and not (lineup_ready and SELL_BENCH_WHEN_LINEUP_READY):
+            print(f"     ⏸ {e['name']} (score={e['score']:.3f}) — partido cerca y alineación "
+                  f"sin cerrar ({len(ctx.opt_ids)}/11), se mantiene")
+            continue
+        if low and not bad and lineup_ready and SELL_BENCH_WHEN_LINEUP_READY and e["score"] < 1.5:
+            print(f"     🔓 {e['name']} (score={e['score']:.3f}) — alineación cerrada, se vende")
+            has_repl = True
+        else:
+            has_repl = any(r["position"] == e["position"] and r["status"] == "ok"
+                           and r["score"] > e["score"] and r["p_start"] >= MIN_P_START_BUY
+                           for r in ctx.free_market)
         if not has_repl:
             print(f"     ⏸ {e['name']} ({st}, score={e['score']:.3f}) — sin mejor reemplazo en el mercado")
             continue

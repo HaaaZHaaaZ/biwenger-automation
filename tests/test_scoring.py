@@ -107,3 +107,23 @@ def test_build_smart_lineup_requires_gk():
     assert formation == "4-4-2"  # only formation that fits with 1 GK + 4 DEF + 4 MID + 2 FWD
     assert detail["total"] > 0
     assert len(pool) == 11
+
+
+def test_score_player_with_models():
+    """Testea scoring con modelos ML entrnados."""
+    from biwenger.scoring import score_player
+    from biwenger.models import MODEL_MANAGER
+    
+    # Si hay modelos entrenados, usarlos; si no, hacer skip
+    available_positions = MODEL_MANAGER.available()
+    if not available_positions:
+        # Si no hay modelos, el scoring debe funcionar con heurística
+        player_data = {"status": "ok", "points": 90, "playedHome": 5, "playedAway": 5, "fitness": [1]*5}
+        result = score_player(player_data, None, is_home=False)
+        assert len(result) == 3
+        return
+    
+    # Jugador de ejemplo con features reales
+    player_data = {"status": "ok", "points": 90, "playedHome": 5, "playedAway": 5, "fitness": [1]*5}
+    result = score_player(player_data, None, is_home=False)
+    assert len(result) == 3

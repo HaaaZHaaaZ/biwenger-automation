@@ -3,10 +3,11 @@
 Sin dependencias de API ni de `biwenger_daily`. Todas las funciones
 toman datos plano (dicts) y devuelven resultados plano.
 """
-import random
-from datetime import datetime, timedelta
+import numpy as np
+from biwenger.models import MODEL_MANAGER
+import biwenger.config
 
-from biwenger.config import STATUS_MULT, FORMATIONS, POS_NAMES, CAPTAIN_MAX_VALUE, MIN_P_START_BUY
+# ML model manager imported above (MODEL_MANAGER)
 
 
 # ── Helpers numéricos ────────────────────────────────────────────────────────
@@ -24,6 +25,14 @@ def estimate_p_start(cp, games):
     return round(0.2 + 0.8 * played / len(last), 3)
 
 
+def _consistency(pool, pid):
+    """Calculate coefficient of variation (CV) as consistency metric."""
+    hist = pool.get(pid, {}).get("history_scores", [])
+    if len(hist) < 3:
+        return 0.0
+    return float(np.std(hist) / (np.mean(hist) + 1e-6))
+
+
 def home_flag(games_map, team_id):
     cond = (games_map.get(team_id) or {}).get("cond")
     return True if cond == "casa" else False if cond == "fuera" else None
@@ -39,26 +48,47 @@ def score_player(cp, diff_rating, p_start=None, is_home=None):
     if not cp:
         return 0.0, "sin datos en catálogo", 0.0
     status = (cp.get("status") or "ok").lower()
-    mult = STATUS_MULT.get(status, 0.7)
+    mult = biwenger.config.STATUS_MULT.get(status, 0.7)
     games = (cp.get("playedHome") or 0) + (cp.get("playedAway") or 0)
     if p_start is None:
         p_start = estimate_p_start(cp, games)
     if mult == 0.0:
         return 0.0, f"status={status} (no puntúa)", p_start
-
+    
     pts = cp.get("points") or 0
     season_avg = pts / games if games else 0.0
     if games == 0:
         last = cp.get("pointsLastSeason") or 0
         season_avg = (last / 30.0 * 0.8) if last else 0.0
-
+    
     fit = [f for f in (cp.get("fitness") or []) if _numeric(f)][-5:]
     fit_avg = sum(fit) / len(fit) if fit else 0.0
-
+    
     # rating 0-100: MENOR = rival más flojo = mejor para nosotros
     easy = 0.5 if diff_rating is None else (100.0 - float(diff_rating)) / 100.0
-
-    base = 0.35 * season_avg + 0.35 * fit_avg + 3.0 * 0.30 * easy
+    
+    # Try model prediction first
+    pos = cp.get("position", 0)
+    tag = {1: "gk", 2: "def", 3: "mid", 4: "fwd"}.get(pos)
+    if tag:
+        try:
+            feat_values = [
+                season_avg,
+                fit_avg,
+                easy * 100,
+                p_start,
+                cp.get("minutes", 90),
+                pos
+            ]
+            pred_pts = MODEL_MANAGER.predict(tag, [feat_values])[0]
+            pred_ps = MODEL_MANAGER.predict_iso(tag, [p_start])[0]
+            base = pred_pts
+            p_start = pred_ps
+        except Exception:
+            base = 0.35 * season_avg + 0.35 * fit_avg + 3.0 * 0.30 * easy
+    else:
+        base = 0.35 * season_avg + 0.35 * fit_avg + 3.0 * 0.30 * easy
+    
     score = base * mult * p_start
     loc = ""
     if is_home is not None:
@@ -79,11 +109,13 @@ def parse_ts(v):
         if isinstance(v, (int, float)) and not isinstance(v, bool):
             if v > 1e11:
                 v = v / 1000.0
+            from datetime import datetime
             return datetime.fromtimestamp(v)
         if isinstance(v, str):
             s = v.strip()
             if s.isdigit():
                 return parse_ts(int(s))
+            from datetime import datetime
             dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
             if dt.tzinfo:
                 dt = dt.astimezone().replace(tzinfo=None)
@@ -98,6 +130,7 @@ def get_fixture_info(lineup_players):
     Dificultad y condición del PRÓXIMO partido por equipo.
     Devuelve (diff_map, games_map, round_name, kickoffs).
     """
+    from datetime import datetime, timedelta
     diff_map, games_map, kickoffs = {}, {}, {}
     round_name = None
     seen = set()
@@ -168,9 +201,9 @@ def build_smart_lineup(squad_ids, catalog, diff_map, games_map):
         by_pos[k].sort(key=lambda x: x["score"], reverse=True)
     if not by_pos[1]:
         return None, None, None, pool
-
+    
     best = None
-    for name, nd, nm, nf in FORMATIONS:
+    for name, nd, nm, nf in biwenger.config.FORMATIONS:
         if len(by_pos[2]) < nd or len(by_pos[3]) < nm or len(by_pos[4]) < nf:
             continue
         gk = by_pos[1][0]
@@ -197,11 +230,18 @@ def choose_captain_and_striker(detail):
         return None, None
     starters = detail["gk"] + detail["def"] + detail["mid"] + detail["fwd"]
     ok = [e for e in starters if (e.get("status") or "ok").lower() == "ok" and e["score"] > 0]
-    if CAPTAIN_MAX_VALUE > 0:
-        ok = [e for e in ok if e.get("price", 0) <= CAPTAIN_MAX_VALUE]
+    captain_max_val = getattr(biwenger.config, "CAPTAIN_MAX_VALUE", 0)
+    if captain_max_val > 0:
+        ok = [e for e in ok if e.get("price", 0) <= captain_max_val]
     safe = [e for e in ok if e["p_start"] >= 0.85] or ok
-    cap = max(safe, key=lambda e: e["score"]) if safe else None
-    fwds = sorted([e for e in safe if e["position"] == 4], key=lambda e: e["score"], reverse=True)
+    
+    # Calculate adjusted score with consistency penalty
+    for e in safe:
+        cv = _consistency(detail, e["id"])
+        e["adj_score"] = e["score"] * (1 - min(cv, 0.3))  # Cap 30% penalty
+    
+    cap = max(safe, key=lambda e: e["adj_score"]) if safe else None
+    fwds = sorted([e for e in safe if e.get("position") == 4], key=lambda e: e["score"], reverse=True)
     striker = fwds[0] if fwds else None
     if striker and cap and striker["id"] == cap["id"] and len(fwds) > 1 \
             and fwds[1]["score"] >= 0.9 * striker["score"]:
@@ -255,5 +295,5 @@ def lineup_is_complete(ctx):
         e = ctx.pool.get(pid)
         if e:
             count[e["position"]] = count.get(e["position"], 0) + 1
-    missing = [f"{POS_NAMES[p]}={count.get(p, 0)}" for p, n in need.items() if count.get(p, 0) < n]
+    missing = [f"{biwenger.config.POS_NAMES[p]}={count.get(p, 0)}" for p, n in need.items() if count.get(p, 0) < n]
     return (not missing), ", ".join(missing)

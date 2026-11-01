@@ -44,7 +44,7 @@ Archivos revisados:
 
 ## 4. Hallazgos
 
-### Tabla de hallazgos
+### Tabla de hallazgos (actualizada v14.1.0)
 
 | ID | Severidad | Archivo | Línea | Descripción | Reproducible |
 |----|-----------|---------|-------|-------------|--------------|
@@ -53,12 +53,21 @@ Archivos revisados:
 | H3 | Informativa | `biwenger/utils.py` | 51-62 | `get_headers` construye Authorization Bearer — correcto, pero logging podría exponer headers si se pasan a log_action | No |
 | H4 | Informativa | `biwenger/api.py` | 31 | Timeout de escritura guarda unknown_state y aborta — correcto | No |
 | H5 | Baja | `biwenger/writes.py` | 44-50 | `guarded_write` incrementa write_count antes de ejecutar fn(); si fn() lanza excepción, el conteo ya se incrementó | No |
+| H6 | Baja | `biwenger/models.py` | - | Modelos ML guardados en claro en `models/` (no son secretos, pero deberían estar en directorio protegido en entornos de alta seguridad) | No |
+
+### Novedades v14.1.0
+
+- **Modelos ML**: Nuevo módulo `biwenger/models.py` con `ModelManager`. Los modelos se entrenan vía `biwenger/scripts/train_models.py` usando datos de `biwenger_features.db`.
+- **Umbrales ajustados**: `BUY_MARGIN`, `CUSHION_PCT`, `ACCEPT_MACHINE_MIN`, `MAX_SELLS` actualizados.
+- **Ventas de suplentes con alineación cerrada**: Lógica para vender incluso con 11 titulares cuando `SELL_BENCH_WHEN_LINEUP_READY=True`.
+- **Script de validación**: `biwenger/scripts/validate_strategy.py` para testing en cuentas de prueba.
+- **Dependencias ML**: `scikit-learn`, `joblib` añadidos a `requirements.txt` y `requirements-lock.txt`.
 
 ### Análisis de secretos
 
-- **Secretos en código:** Ninguno encontrado. Todas las credenciales se cargan desde `.env` vía `os.environ`.
+- **Secretos en código:** Ninguno encontrado. Todas las credenciales se cargan desde `.env` vía `os.environ` o Bitwarden.
 - **Secretos en historial Git:** `.env` nunca fue commiteado. Solo `.env.example` está trackeado.
-- **Variables de entorno:** `BIWENGER_EMAIL`, `BIWENGER_PASSWORD`, `BIWENGER_LEAGUE_ID`, `BIWENGER_USER_ID` cargadas desde `.env`.
+- **Variables de entorno:** `BIWENGER_EMAIL`, `BIWENGER_PASSWORD`, `BIWENGER_LEAGUE_ID`, `BIWENGER_USER_ID`, `BW_PASSWORD` (Bitwarden) cargadas desde `.env` o Bitwarden.
 - **Permisos:** `.env` tenía 644 (world-readable). **Corregido a 600.**
 
 ### Destinos de red

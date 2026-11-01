@@ -1,11 +1,11 @@
-# ⚽ Biwenger Auto-Trader v14.0.1
+# ⚽ Biwenger Auto-Trader v14.1.0
 
 > Automatización inteligente del juego Biwenger vía API REST — login, mercado, alineación, ofertas y más.
 
 ![Python](https://img.shields.io/badge/python-3.9+-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Status](https://img.shields.io/badge/status-production-brightgreen.svg)
-![Version](https://img.shields.io/badge/version-14.0.1-blue.svg)
+![Version](https://img.shields.io/badge/version-14.1.0-blue.svg)
 
 ---
 
@@ -27,6 +27,15 @@
 - [Licencia](#-licencia)
 
 ---
+
+## 🆕 Novedades v14.1.0 (2026-11-01)
+
+- **Modelos ML por posición**: Nuevo módulo `biwenger/models.py` con `ModelManager` para modelos `LinearRegression` + `IsotonicRegression` por posición (GK/DEF/MID/FWD). Entrenamiento vía `biwenger/scripts/train_models.py` usando feature store SQLite (`biwenger_features.db`).
+- **Scorer mejorado**: `score_player()` ahora usa predicciones ML cuando hay modelos disponibles, con fallback silencioso a heurística legacy.
+- **Umbrales optimizados**: `BUY_MARGIN=0.03` (era 0.05), `CUSHION_PCT=0.05` (era 0.08), `ACCEPT_MACHINE_MIN=0.90` (era 0.92), `MAX_SELLS=6` (era 4). Mayor agresividad en compras y desbloqueo de cupo.
+- **Ventas de suplentes con alineación cerrada**: Si `SELL_BENCH_WHEN_LINEUP_READY=True` y la alineación tiene 11 titulares, se venden suplentes con score < 1.5 (era 2.0) sin esperar a que el partido esté lejos.
+- **Validación en cuentas de prueba**: Nuevo script `biwenger/scripts/validate_strategy.py` para ejecutar dry-run completo en cuentas de prueba antes de aplicar cambios a la principal.
+- **Dependencias ML**: `scikit-learn`, `joblib` añadidas a `requirements.txt` y `requirements-lock.txt`.
 
 ## 🆕 Novedades v14.0.1 (2026-10-26)
 
@@ -152,7 +161,9 @@ biwenger-automation/
 │   ├── writes.py          # guarded_write + operaciones de escritura
 │   ├── scoring.py         # Scoring, lineup, mercado
 │   ├── stages.py          # 6 etapas del pipeline
-│   └── cli.py             # probe, save_outputs, run, main
+│   ├── cli.py             # probe, save_outputs, run, main
+│   ├── features.py        # Feature store SQLite
+│   └── models.py          # Modelos ML por posición
 ├── .env.example           # Plantilla de credenciales
 ├── .env                   # ⚠️ Tus credenciales (NO se sube)
 ├── .gitignore             # Archivos ignorados
@@ -172,7 +183,12 @@ biwenger-automation/
 │   ├── test_safety.py
 │   ├── test_scoring.py
 │   ├── test_utils.py
-│   └── test_write_modes.py
+│   ├── test_write_modes.py
+│   ├── test_features.py
+│   ├── test_models.py
+│   └── test_choose_captain_striker.py
+├── scripts/               # Scripts de utilidad
+│   └── backfill_features.py
 └── docs/                  # Documentación detallada
     ├── environment.md
     ├── scoring.md

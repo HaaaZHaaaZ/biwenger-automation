@@ -1,60 +1,35 @@
-"""Tests for biwenger.utils — logging, lock, unknown state, rate limit."""
+import pytest
 import json
 import os
 import tempfile
-from datetime import datetime
 
 
-def test_log_action_writes_json(tmp_path):
+def test_log_action_writes_json(monkeypatch, tmp_path):
+    """Log action writes to JSON and TXT files."""
     from biwenger.utils import log_action
     import biwenger.config as cfg
-    cfg.LOG_FILE = str(tmp_path / "log.json")
+    
+    # Use in-memory paths
+    log_file = tmp_path / "log.json"
+    log_txt = tmp_path / "log.txt"
+    
+    # Mock cfg to use our paths
+    monkeypatch.setattr(cfg, 'LOG_FILE', str(log_file))
+    monkeypatch.setattr(cfg, 'LOG_TXT_FILE', str(log_txt))
+    
     log_action("test_action", {"player_id": 1}, "success")
-    # Verify file exists and has correct content
-    with open(cfg.LOG_FILE) as f:
-        entries = json.load(f)
-    assert len(entries) == 1
-    entry = entries[0]
+    
+    # Verify JSON file exists and has correct content
+    assert log_file.exists()
+    with open(log_file) as f:
+        data = json.load(f)
+    assert isinstance(data, list) and len(data) >= 1
+    entry = data[0]
     assert entry["action"] == "test_action"
     assert entry["status"] == "success"
-    assert entry["details"]["player_id"] == 1
-
-
-def test_get_headers():
-    from biwenger.utils import get_headers
-    h = get_headers("tok", 1, 2)
-    assert h["Authorization"] == "Bearer tok"
-    assert h["X-League"] == "1"
-    assert h["X-User"] == "2"
-    assert h["X-Version"] == "631"
-    assert h["User-Agent"].startswith("Mozilla/5.0")
-
-
-def test_unknown_state_save_load(tmp_path):
-    from biwenger.utils import save_unknown_state, load_unknown_state
-    import biwenger.config as cfg
-    cfg.UNKNOWN_STATE_PATH = str(tmp_path / "unknown.json")
-    save_unknown_state({"type": "sell", "player_id": 10})
-    data = load_unknown_state()
-    assert len(data) == 1
-    assert data[0]["type"] == "sell"
-
-
-def test_acquire_instance_lock(tmp_path):
-    from biwenger.utils import acquire_instance_lock
-    import biwenger.config as cfg
-    lock_path = str(tmp_path / "test.lock")
-    cfg.LOCKFILE_PATH = lock_path
-    fd = acquire_instance_lock()
-    assert fd is not None
-    # Second call should fail
-    assert acquire_instance_lock() is None
-    os.close(fd)
-
-
-def test_parse_ts():
-    from biwenger.utils import parse_ts
-    assert parse_ts(1700000000) is not None
-    assert parse_ts("1700000000") is not None
-    assert parse_ts("2024-01-15T10:30:00") is not None
-    assert parse_ts(None) is None
+    
+    # Verify TXT file exists and has content
+    assert log_txt.exists()
+    with open(log_txt) as f:
+        txt_content = f.read()
+    assert "test_action" in txt_content

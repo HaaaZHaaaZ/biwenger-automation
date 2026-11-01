@@ -23,12 +23,14 @@ def test_constants_present():
 
 
 def test_version_consistency():
+    """Version consistency across modules."""
     from biwenger.version import __version__
     from biwenger.config import VERSION
     from biwenger import __version__ as pkg_version
     assert VERSION == __version__
     assert pkg_version == __version__
-    assert __version__ == "14.0"
+    # Updated version for new model features
+    assert __version__ == "14.1.0"
 
 def test_env_helpers():
     from biwenger.config import env_str, env_int, env_float, env_bool

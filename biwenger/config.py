@@ -91,7 +91,7 @@ MAX_LOG_ENTRIES = env_int("BIWENGER_MAX_LOG_ENTRIES", 1500)
 # Límites de actividad
 MAX_WRITES = env_int("BIWENGER_MAX_WRITES", 8)
 MAX_BUYS = env_int("BIWENGER_MAX_BUYS", 2)
-MAX_SELLS = env_int("BIWENGER_MAX_SELLS", 4)
+MAX_SELLS = env_int("BIWENGER_MAX_SELLS", 6)  # Aumentado de 4 a 6
 MIN_SQUAD = env_int("BIWENGER_MIN_SQUAD", 12)      # nunca bajar de esta plantilla por ventas
 MAX_SQUAD = env_int("BIWENGER_MAX_SQUAD", 0)       # 0 = sin comprobar tope de plantilla
 # Opción B: con la alineación ya cerrada y el partido cerca, SÍ se puede vender
@@ -110,8 +110,8 @@ STRIKER_KEY = env_str("BIWENGER_STRIKER_KEY")      # p. ej. "striker" (vacío = 
 CAPTAIN_MAX_VALUE = env_int("BIWENGER_CAPTAIN_MAX_VALUE", 0)  # 0 = sin tope de valor
 
 # Compras / pujas
-BUY_MARGIN = env_float("BIWENGER_BUY_MARGIN", 0.05)
-CUSHION_PCT = env_float("BIWENGER_CUSHION_PCT", 0.08)
+BUY_MARGIN = env_float("BIWENGER_BUY_MARGIN", 0.03)  # Reducido de 0.05 a 0.03 para compras más agresivas
+CUSHION_PCT = env_float("BIWENGER_CUSHION_PCT", 0.05)  # Reducido de 0.08 a 0.05
 CUSHION_MIN = env_int("BIWENGER_CUSHION_MIN", 500000)
 BID_LOW = env_float("BIWENGER_BID_LOW", 1.04)
 BID_MID = env_float("BIWENGER_BID_MID", 1.10)
@@ -127,7 +127,7 @@ MAX_DROP_PCT = env_float("BIWENGER_MAX_DROP_PCT", 0.08)
 # Desbloqueo de cupo: con la liga a 16 (jugadores + ofertas abiertas) una venta
 # solo libera hueco si COMPLETA la venta. Si las ofertas de la máquina se
 # rechazan, la cuenta queda bloqueada (16/16) y no puede comprar nunca.
-ACCEPT_MACHINE_MIN = env_float("BIWENGER_ACCEPT_MACHINE_MIN", 0.92)
+ACCEPT_MACHINE_MIN = env_float("BIWENGER_ACCEPT_MACHINE_MIN", 0.90)  # Reducido de 0.92 a 0.90
 MAX_TEAM_SIZE = env_int("BIWENGER_MAX_TEAM_SIZE", 16)
 
 BAD_STATUS = {"injured", "suspended", "sanctioned"}
