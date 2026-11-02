@@ -2,6 +2,20 @@
 
 Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); versiones [SemVer](https://semver.org/lang/es/).
 
+## [14.2.1] - 2026-11-02
+
+### Arreglado
+- El resumen de "Ofertas recibidas" del registro usa el mismo filtro que `stage_received_offers` (antes ocultaba ofertas de otros usuarios); eliminada una línea duplicada de pujas propias.
+- `tests/conftest.py` fija `BIWENGER_DRY_RUN=true`: `test_ctx_defaults` ya no falla según el `.env` local.
+
+### Cambiado
+- `X-Version` por defecto 632 (antes 631; la API actual usa 632).
+
+### Eliminado
+- Código ML sin uso: `biwenger/models.py`, `biwenger/features.py`, `biwenger/scripts/train_models.py`, `scripts/backfill_features.py`, `tests/test_models.py`, `tests/test_features.py` y el test de scoring con modelos.
+- Dependencias `pandas`, `numpy`, `scikit-learn` y `joblib` de `requirements.txt`.
+- `stage_process_own_sale_offers` y sus tests: filtraba nuestras propias pujas, no ofertas de compradores, y ya estaba fuera del flujo desde 14.2.0.
+
 ## [14.2.0] - 2026-11-02
 
 ### Añadido

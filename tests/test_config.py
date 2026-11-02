@@ -30,7 +30,7 @@ def test_version_consistency():
     assert VERSION == __version__
     assert pkg_version == __version__
     # Updated version for new model features
-    assert __version__ == "14.2.0"
+    assert __version__ == "14.2.1"
 
 def test_env_helpers():
     from biwenger.config import env_str, env_int, env_float, env_bool

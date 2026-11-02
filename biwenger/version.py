@@ -3,4 +3,4 @@
 Fuente única de verdad: cambiar aquí actualiza toda la aplicación.
 """
 
-__version__ = "14.2.0"
+__version__ = "14.2.1"

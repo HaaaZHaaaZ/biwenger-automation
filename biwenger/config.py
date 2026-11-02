@@ -60,7 +60,7 @@ LEAGUE_ID = env_int("BIWENGER_LEAGUE_ID", 0)   # 0 = automático
 USER_ID = env_int("BIWENGER_USER_ID", 0)       # 0 = automático
 
 # API
-APP_VERSION = env_str("BIWENGER_VERSION", "631")   # cabecera X-Version
+APP_VERSION = env_str("BIWENGER_VERSION", "632")   # cabecera X-Version
 UA = env_str(
     "BIWENGER_USER_AGENT",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "

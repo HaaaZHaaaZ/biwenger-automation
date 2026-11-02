@@ -92,7 +92,7 @@ def _log_current_state(ctx, stage_name: str):
     received_offers = [o for o in ctx.offers
                        if o.get("status") == "waiting"
                        and (o.get("to") or {}).get("id") == ctx.user_id
-                       and (o.get("from") or {}).get("id") is None]
+                       and (o.get("from") or {}).get("id") != ctx.user_id]
     received_desc = []
     for o in received_offers:
         pids = offer_player_ids(o)
@@ -101,19 +101,6 @@ def _log_current_state(ctx, stage_name: str):
             name = ctx.catalog.get(str(pid), {}).get('name', '?')
             received_desc.append(f"{name} €{o.get('amount', 0):,}")
     print(f"     Ofertas recibidas ({len(received_offers)}): {received_desc}")
-    # Ofertas en nuestras ventas (compradores ofertando por lo que vendemos)
-    own_sale_offers = [o for o in ctx.offers
-                       if o.get("status") == "waiting"
-                       and (o.get("from") or {}).get("id") == ctx.user_id
-                       and (o.get("to") or {}).get("id") != ctx.user_id]
-    own_sale_desc = []
-    for o in own_sale_offers:
-        pids = offer_player_ids(o)
-        if pids:
-            pid = pids[0]
-            name = ctx.catalog.get(str(pid), {}).get('name', '?')
-            own_sale_desc.append(f"{name} €{o.get('amount', 0):,}")
-    print(f"     Ofertas en nuestras ventas ({len(own_sale_offers)}): {own_sale_desc}")
 
 
 def stage_cleanup_offers(ctx):
@@ -268,86 +255,6 @@ def stage_received_offers(ctx):
             else:
                 print(f"       ❌ Error rechazando: {msg}")
                 log_action("offer_reject_failed", {"offer_id": oid, "reason": msg}, "error")
-
-
-def stage_process_own_sale_offers(ctx):
-    """OBSOLETA, fuera del flujo de run(): filtra from=nosotros, es decir, nuestras propias
-    pujas, nunca ofertas de compradores. Esas llegan con to=nosotros y las atiende
-    stage_received_offers."""
-    _log_current_state(ctx, "ofertas_ventas_propias")
-    print("\n  0b. Ofertas en nuestras ventas:")
-    if getattr(ctx, "abort", False):
-        return
-    # Ofertas donde somos el vendedor (from.id == ctx.user_id) y el jugador está en venta
-    own_sale_offers = [o for o in ctx.offers
-                       if o.get("status") == "waiting"
-                       and (o.get("from") or {}).get("id") == ctx.user_id
-                       and (o.get("to") or {}).get("id") != ctx.user_id]
-
-    if not own_sale_offers:
-        print("     ✅ No hay ofertas en nuestras ventas")
-        return
-
-    for o in own_sale_offers:
-        if not ctx.can_write():
-            print("     ⚠️ Límite de escrituras alcanzado")
-            break
-        oid, amount = o.get("id"), o.get("amount", 0) or 0
-        pids = offer_player_ids(o)
-        if len(pids) != 1:
-            continue
-        pid = pids[0]
-        # FIX: Solo procesar ofertas sobre jugadores que tenemos EN VENTA ACTIVA
-        if pid not in ctx.my_sale_ids:
-            cp = ctx.catalog.get(str(pid))
-            name = cp.get("name", f"id={pid}") if cp else f"id={pid}"
-            print(f"     ⏭️  Oferta #{oid} por {name} (id={pid}) — no está en nuestras ventas activas, se omite")
-            continue
-        cp = ctx.catalog.get(str(pid))
-        if not cp:
-            continue
-        name = cp.get("name", f"id={pid}")
-        market_price = cp.get("price", 0) or 0
-        ratio = amount / market_price if market_price > 0 else 0
-
-        print(f"     📥 Oferta #{oid} por {name} — €{amount:,} (ratio={ratio*100:.1f}%)")
-
-        # Aceptar si ratio >= ACCEPT_NORMAL (1.10) o si está lesionado y ratio >= ACCEPT_INJURED (0.90)
-        st = (cp.get("status") or "ok").lower()
-        injured = st in BAD_STATUS
-        accept = False
-        reason = ""
-
-        if ratio >= ACCEPT_HIGH:
-            accept, reason = True, f"oferta ≥ {ACCEPT_HIGH*100:.0f}% del mercado"
-        elif ratio >= ACCEPT_NORMAL:
-            accept, reason = True, f"oferta ≥ {ACCEPT_NORMAL*100:.0f}% del mercado"
-        elif injured and ratio >= ACCEPT_INJURED:
-            accept, reason = True, f"{st} y oferta ≥ {ACCEPT_INJURED*100:.0f}%"
-        else:
-            reason = f"ratio {ratio*100:.1f}% insuficiente"
-
-        if accept:
-            ok, msg = answer_offer(ctx, oid, "accepted")
-            if ok:
-                print(f"       ✅ Aceptada — {reason}")
-                ctx.balance += amount
-                ctx.act("offer_accepted", offer_id=oid, player_id=pid, player_name=name, amount=amount)
-                log_action("offer_accepted", {"offer_id": oid, "player_id": pid, "player_name": name, "amount": amount, "reason": reason}, "success")
-                # Remove from our sale list
-                ctx.my_sale_ids.discard(pid)
-                ctx.squad_ids = [i for i in ctx.squad_ids if i != pid]
-                ctx.recompute()
-            else:
-                print(f"       ❌ Error aceptando: {msg}")
-        else:
-            ok, msg = answer_offer(ctx, oid, "rejected")
-            if ok:
-                print(f"       ❌ Rechazada — {reason}")
-                ctx.act("offer_rejected", offer_id=oid, player_id=pid, player_name=name, amount=amount)
-                log_action("offer_rejected", {"offer_id": oid, "player_id": pid, "player_name": name, "amount": amount, "reason": reason}, "success")
-            else:
-                print(f"       ❌ Error rechazando: {msg}")
 
 
 def stage_sell_bench(ctx):

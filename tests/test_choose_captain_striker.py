@@ -1,7 +1,6 @@
 import pytest
 import json
 import os
-import numpy as np
 
 
 def test_choose_captain_and_striker_basic():

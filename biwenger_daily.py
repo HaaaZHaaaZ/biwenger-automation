@@ -66,7 +66,7 @@ from biwenger import (
     build_smart_lineup, choose_captain_and_striker,
     build_free_market, lineup_is_complete,
     stage_cleanup_offers, stage_received_offers,
-    stage_process_own_sale_offers, stage_sell_bench, stage_buy, stage_lineup,
+    stage_sell_bench, stage_buy, stage_lineup,
     probe, save_outputs,
     # API functions
     api, _api_write, set_session, set_wait_budget, set_ctx,

@@ -1,16 +1,17 @@
-# ⚽ Biwenger Auto-Trader v14.2.0
+# ⚽ Biwenger Auto-Trader v14.2.1
 
 > Automatización inteligente del juego Biwenger vía API REST — login, mercado, alineación, ofertas y más.
 
 ![Python](https://img.shields.io/badge/python-3.9+-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Status](https://img.shields.io/badge/status-production-brightgreen.svg)
-![Version](https://img.shields.io/badge/version-14.2.0-blue.svg)
+![Version](https://img.shields.io/badge/version-14.2.1-blue.svg)
 
 ---
 
 ## 📑 Tabla de contenidos
 
+- [Novedades v14.2.1](#-novedades-v1421-2026-11-02)
 - [Novedades v14.2.0](#-novedades-v1420-2026-11-01)
 - [Novedades v14.1.0](#-novedades-v1410-2026-11-01)
 - [Novedades v14.0.1](#-novedades-v1401)
@@ -29,6 +30,14 @@
 - [Licencia](#-licencia)
 
 ---
+
+## 🆕 Novedades v14.2.1 (2026-11-02)
+
+- **Limpieza del ML**: eliminados `biwenger/models.py`, `biwenger/features.py`, `scripts/train_models.py`, `scripts/backfill_features.py` y sus tests; fuera `pandas`, `numpy`, `scikit-learn` y `joblib` de `requirements.txt`. El scorer no los usaba desde v14.2.0.
+- **Etapa obsoleta eliminada**: `stage_process_own_sale_offers` (filtraba nuestras propias pujas, no ofertas de compradores; ya estaba fuera del flujo). Las ofertas por jugadores en venta las procesa `stage_received_offers`.
+- **Registro**: el resumen de "Ofertas recibidas" usa el mismo filtro que la etapa real (antes ocultaba las de otros usuarios) y se quita una línea duplicada.
+- **`X-Version` por defecto 632** (la que usa la API hoy).
+- **Tests**: `test_ctx_defaults` ya no depende del `.env` local. 94 tests pasando.
 
 ## 🆕 Novedades v14.2.0 (2026-11-01)
 
@@ -147,7 +156,7 @@ python3 biwenger_daily.py --probe
 
 `verify.sh` devuelve exit code ≠ 0 si falla la compilación, el grep detecta escrituras fuera de `guarded_write`, o falla algún test. La salida completa queda en `VERIFY_OUTPUT.txt`.
 
-**102 tests** (100 pasan, 1 se omite; ver Pendiente sobre `test_ctx_defaults`) cubren: seguridad (abort, read_only, dry_run, límites), timeouts, HTTP 429, concurrencia, persistencia de estado incierto, config, model, scoring, utils.
+**94 tests** cubren: seguridad (abort, read_only, dry_run, límites), timeouts, HTTP 429, concurrencia, persistencia de estado incierto, config, model, scoring, utils.
 
 ---
 
@@ -175,8 +184,7 @@ biwenger-automation/
 │   ├── scoring.py         # Scoring, lineup, mercado
 │   ├── stages.py          # 6 etapas del pipeline
 │   ├── cli.py             # probe, save_outputs, run, main
-│   ├── features.py        # Feature store SQLite
-│   └── models.py          # Modelos ML por posición
+│   └── scripts/validate_strategy.py  # Validación en cuentas de prueba
 ├── .env.example           # Plantilla de credenciales
 ├── .env                   # ⚠️ Tus credenciales (NO se sube)
 ├── .gitignore             # Archivos ignorados
@@ -186,7 +194,8 @@ biwenger-automation/
 ├── verify.sh              # Verificación de cierre
 ├── README.md              # Documentación
 ├── SECURITY_AUDIT.md      # Auditoría de seguridad
-├── tests/                 # Suite pytest (75 tests)
+├── CHANGELOG.md           # Historial de cambios
+├── tests/                 # Suite pytest (94 tests)
 │   ├── conftest.py
 │   ├── test_abort.py
 │   ├── test_config.py
@@ -197,11 +206,7 @@ biwenger-automation/
 │   ├── test_scoring.py
 │   ├── test_utils.py
 │   ├── test_write_modes.py
-│   ├── test_features.py
-│   ├── test_models.py
 │   └── test_choose_captain_striker.py
-├── scripts/               # Scripts de utilidad
-│   └── backfill_features.py
 └── docs/                  # Documentación detallada
     ├── environment.md
     ├── scoring.md
@@ -254,9 +259,8 @@ Fuera del alcance de v13.3, documentado como deuda técnica:
 - `log_action` en JSONL append con `RotatingFileHandler` (hoy: JSON + lock + escritura atómica).
 - Reintento único o estado explícito `rate_limited` en `api()` para 429 en escrituras con `Retry-After ≤ 60s`.
 - Registro de `unknown_outcome` ante 5xx o respuesta ilegible tras enviar una escritura.
-- `test_ctx_defaults` falla si el `.env` local tiene `BIWENGER_DRY_RUN=false`: el cargador de `.env` pisa las variables del entorno, así que el test depende de la configuración local.
-- `biwenger/models.py` y `scripts/train_models.py` (ML de v14.1) ya no se usan: eliminarlos.
-- Revisar si `stage_process_own_sale_offers` debe volver a llamarse desde `cli.py` (en v14.2 no se llama; las ofertas sobre jugadores en venta llegan por `stage_received_offers`).
+**Resueltos en v14.2.1:**
+- ✅ Código ML sin uso eliminado; `test_ctx_defaults` independiente del `.env` local; etapa obsoleta `stage_process_own_sale_offers` eliminada.
 
 **Resueltos en v14.2.0:**
 - ✅ `resolve_unknown_state`: la pasada de solo lectura resuelve el estado incierto y la siguiente vuelve a escribir (ya no hay que borrar el fichero a mano).

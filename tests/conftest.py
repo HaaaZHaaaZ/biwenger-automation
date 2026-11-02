@@ -9,7 +9,7 @@ os.environ["BIWENGER_DATA_DIR"] = _TMP
 os.environ["BIWENGER_REQUEST_DELAY"] = "0"
 os.environ["BIWENGER_START_JITTER_MAX"] = "0"
 os.environ.pop("BIWENGER_TOKEN", None)
-os.environ.pop("BIWENGER_DRY_RUN", None)
+os.environ["BIWENGER_DRY_RUN"] = "true"  # los tests usan el valor por defecto, no el del .env local
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)

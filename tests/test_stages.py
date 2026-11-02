@@ -1,6 +1,6 @@
-"""Tests para stage_process_own_sale_offers — validación de my_sale_ids y snapshot de estado."""
+"""Tests del snapshot de estado de las etapas."""
 import pytest
-from biwenger.stages import stage_process_own_sale_offers, _log_current_state
+from biwenger.stages import _log_current_state
 
 
 class FakeCtx:
@@ -56,49 +56,3 @@ def test_log_current_state_imprime_sin_explotar(capsys):
     assert "test_snapshot" in captured.out
     assert "Alineación óptima" in captured.out
     assert "Ventas activas" in captured.out
-
-
-def test_stage_process_own_sale_offers_filtra_my_sale_ids(capsys, monkeypatch):
-    """Solo se procesan ofertas cuyos jugadores están en my_sale_ids; los demás se omiten."""
-    ctx = FakeCtx()
-    accepted_ids = []
-
-    def fake_answer_offer(ctx, offer_id, status):
-        if status == "accepted":
-            accepted_ids.append(offer_id)
-        return (True, "ok")
-
-    monkeypatch.setattr("biwenger.stages.answer_offer", fake_answer_offer)
-    monkeypatch.setattr("biwenger.stages.log_action", lambda *a, **k: None)
-
-    stage_process_own_sale_offers(ctx)
-
-    output = capsys.readouterr().out
-
-    # Las ofertas fuera de my_sale_ids deben omitirse con mensaje
-    assert "se omite" in output, "Debería haber mensajes de omisión"
-    assert "2303700935" in output, "Oferta por Olasagasti debería estar como omitida"
-    assert "3978901749" in output, "Oferta por Gulácsi debería estar como omitida"
-
-    # answer_offer NO debe haberse llamado para ofertas fuera de my_sale_ids
-    # (oferta 100 es de tipo "received", no "own_sale", así que no se procesa en este stage)
-    assert accepted_ids == [], f"No se debió llamar answer_offer, pero se llamó con: {accepted_ids}"
-
-
-def test_stage_no_llama_a_answer_offer_para_ofertas_fuera_de_my_sale_ids(monkeypatch):
-    """Verificar que answer_offer nunca se llama para ofertas de jugadores no en venta."""
-    ctx = FakeCtx()
-    calls = []
-
-    def fake_answer_offer(ctx, offer_id, status):
-        calls.append((offer_id, status))
-        return (True, "ok")
-
-    monkeypatch.setattr("biwenger.stages.answer_offer", fake_answer_offer)
-    monkeypatch.setattr("biwenger.stages.log_action", lambda *a, **k: None)
-
-    stage_process_own_sale_offers(ctx)
-
-    # No debe haber llamadas a answer_offer porque las ofertas válidas
-    # (100) son del tipo "received" (from.id=None), no "own_sale" (from.id=user_id)
-    assert calls == [], f"Se llamò answer_offer incorrectamente: {calls}"

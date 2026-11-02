@@ -19,10 +19,6 @@ from biwenger.writes import *
 from biwenger.stages import *
 from biwenger.cli import *
 
-# Import new ML modules
-from biwenger.features import init_db, upsert_features, load_training_data
-from biwenger.models import train_and_save, load_models, MODEL_DIR, POS_MODELS
-
 # Explicitly re-export _api_write (used by AST test, prefixed with _ so not in *)
 from biwenger.api import _api_write
 

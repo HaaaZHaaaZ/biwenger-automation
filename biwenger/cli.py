@@ -14,8 +14,7 @@ from biwenger.utils import log_action, acquire_instance_lock, rate_limit_active,
 from biwenger.writes import set_lineup
 from biwenger.scoring import get_fixture_info, build_free_market, offer_player_ids
 from biwenger.stages import (
-    stage_cleanup_offers, stage_received_offers,
-    stage_process_own_sale_offers, stage_sell_bench, stage_buy, stage_lineup
+    stage_cleanup_offers, stage_received_offers, stage_sell_bench, stage_buy, stage_lineup
 )
 
 
