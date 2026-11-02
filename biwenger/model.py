@@ -1,6 +1,7 @@
 """Biwenger model — Ctx class, exceptions, and module-level globals access."""
 import sys
-from biwenger.config import DRY_RUN, MAX_WRITES, CUSHION_PCT, CUSHION_MIN
+from biwenger.config import (DRY_RUN, MAX_WRITES, CUSHION_PCT, CUSHION_MIN, CAPTAIN_KEY,
+                             STRIKER_KEY, MAX_TEAM_SIZE)
 
 
 def _bd():
@@ -77,18 +78,48 @@ class Ctx:
         self.abort = False
         self.captain_id = None
         self.striker_id = None
+        # Reglas reales de la liga (se rellenan desde /league en run())
+        self.league_settings = {}
+        self.score_id = 3
+        self.multipos = False
+        self.captain_enabled = bool(CAPTAIN_KEY)
+        self.striker_enabled = bool(STRIKER_KEY)
+        self.team_max = MAX_TEAM_SIZE
+        self.max_user_sales = 0        # 0 = sin límite conocido
+        self.bids_over_mv = True
+        self.maximum_bid = 0
+        self.fixtures_complete = False
+        self.owner_info = {}
 
-    def can_write(self):
-        return self.write_count < MAX_WRITES
+    def can_write(self, reserve=0):
+        """reserve: escrituras a guardar (la alineación es lo último y lo que da puntos)."""
+        return self.write_count < MAX_WRITES - reserve
+
+    def apply_league_settings(self, league):
+        """Ajusta el comportamiento a la configuración real de la liga."""
+        s = (league or {}).get("settings") or {}
+        self.league_settings = s
+        if (league or {}).get("scoreID"):
+            self.score_id = league["scoreID"]
+        self.multipos = bool(s.get("lineupMultiPos", False))
+        self.captain_enabled = bool(CAPTAIN_KEY) and bool(s.get("lineupCaptain", True))
+        self.striker_enabled = bool(STRIKER_KEY) and bool(s.get("lineupStriker", True))
+        self.team_max = s.get("teamMaxSize") or MAX_TEAM_SIZE
+        self.max_user_sales = s.get("marketMaxUserSales") or 0
+        self.bids_over_mv = s.get("bidsOverMV", True)
+
+    def simulate(self, squad_ids):
+        """Mejor alineación posible con otra plantilla, con las mismas reglas que recompute()."""
+        from biwenger.scoring import build_smart_lineup
+        return build_smart_lineup(squad_ids, self.catalog, self.diff_map, self.games_map,
+                                  multipos=self.multipos, all_fixtures=self.fixtures_complete)
 
     def act(self, kind, **details):
         self.actions.append({"type": kind, **details})
 
     def recompute(self):
         """Recalcula alineación óptima a partir del squad actual."""
-        from biwenger.scoring import build_smart_lineup
-        ids, ftype, detail, pool = build_smart_lineup(
-            self.squad_ids, self.catalog, self.diff_map, self.games_map)
+        ids, ftype, detail, pool = self.simulate(self.squad_ids)
         self.opt_ids, self.opt_type, self.opt_detail, self.pool = (
             ids or [], ftype, detail, pool)
 

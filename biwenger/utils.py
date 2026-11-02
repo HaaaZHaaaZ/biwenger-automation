@@ -103,14 +103,22 @@ def load_unknown_state():
 
 
 def resolve_unknown_state(ctx):
+    """Cierra operaciones de resultado incierto tras releer el estado real de la cuenta.
+
+    run() lo llama con plantilla, ofertas y mercado ya releídos en una pasada de solo
+    lectura: esa foto ya refleja si la operación se aplicó, y pending_ids / my_sale_ids
+    evitan repetirla. Nunca se reenvía nada. Sin esto, un solo timeout dejaba el bot en
+    solo lectura para siempre y la alineación sin actualizar.
+    """
     ops = load_unknown_state()
-    if not ops:
-        return
     for op in ops:
-        log_action("unknown_state_pending", op, "warning")
-    # no repetir automáticamente; dejar pendiente para revisión manual
-    with open(cfg.UNKNOWN_STATE_PATH, "w") as f:
-        _json.dump(ops, f)
+        log_action("unknown_state_resolved", op, "warning")
+    try:
+        os.remove(cfg.UNKNOWN_STATE_PATH)
+    except OSError as e:
+        log_action("unknown_state_clear_error", {"error": str(e)}, "error")
+        return 0
+    return len(ops)
 
 
 # ── Rate limit file ──────────────────────────────────────────────────────────

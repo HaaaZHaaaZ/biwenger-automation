@@ -27,6 +27,8 @@ def _get_api_write():
 def guarded_write(ctx, kind, fn, *args, **kwargs):
     """Punto único de control para toda escritura.
     Comprueba, en orden: ctx.abort, modo dry-run, MAX_WRITES, write_count.
+    Es el único sitio que incrementa ctx.write_count: los llamadores no deben sumarlo.
+    Los errores tipados (429, 401, versión obsoleta) se propagan hasta run().
     """
     if getattr(ctx, "abort", False):
         log_action("write_aborted", {"kind": kind, "reason": "abort"}, "warning")
@@ -43,6 +45,8 @@ def guarded_write(ctx, kind, fn, *args, **kwargs):
     ctx.write_count += 1
     try:
         return fn(*args, **kwargs)
+    except (model.RateLimited, model.AuthError, model.OldVersion):
+        raise
     except Exception as e:
         log_action("write_error", {"kind": kind, "error": str(e)}, "error")
         return False, "error"

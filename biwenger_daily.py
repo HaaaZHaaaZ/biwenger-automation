@@ -58,6 +58,7 @@ from biwenger import (
     resolve_unknown_state, acquire_instance_lock,
     rate_limit_active, set_rate_limit, parse_ts,
     login, get_account, get_squad, get_catalog, get_round_name,
+    get_league_settings, get_round_data, parse_round_fixtures,
     get_market, get_offers, offer_player_ids,
     guarded_write, sell_player, answer_offer, create_purchase_offer,
     retract_offer, set_lineup,
@@ -155,6 +156,14 @@ def run(probe_only=False, live=False):
         ctx.lineup_ids = lineup_info.get("playersID") or []
         print(f"  Plantilla: {len(ctx.squad_ids)} jugadores · formación actual {lineup_info.get('type', '?')}")
 
+        # Reglas reales de la liga: sistema de puntuación, multiposición, capitán, cupos.
+        league = get_league_settings(ctx)
+        if league:
+            ctx.apply_league_settings(league)
+            print(f"  Liga: scoreID={ctx.score_id} · multiposición={'sí' if ctx.multipos else 'no'} · "
+                  f"capitán={'sí' if ctx.captain_enabled else 'no'} · ariete={'sí' if ctx.striker_enabled else 'no'} · "
+                  f"cupo={ctx.team_max}")
+
         ctx.catalog, cat_teams = get_catalog(ctx)
         print(f"  Catálogo: {len(ctx.catalog)} jugadores · {len(cat_teams)} equipos")
         if not ctx.catalog:
@@ -162,8 +171,12 @@ def run(probe_only=False, live=False):
             log_action("no_catalog", {}, "error")
             return 1
 
-        ctx.diff_map, ctx.games_map, ctx.round_name, kickoffs = get_fixture_info(lineup_players)
-        ctx.round_name = ctx.round_name or get_round_name(ctx)
+        fixtures = parse_round_fixtures(get_round_data(ctx))
+        if fixtures[1]:
+            ctx.diff_map, ctx.games_map, ctx.round_name, kickoffs, ctx.fixtures_complete = fixtures
+        else:
+            ctx.diff_map, ctx.games_map, ctx.round_name, kickoffs = get_fixture_info(lineup_players)
+            ctx.round_name = ctx.round_name or get_round_name(ctx)
         future = [d for d in kickoffs.values() if d >= now - timedelta(hours=3)]
         if future:
             ctx.next_kickoff = min(future)
@@ -215,11 +228,16 @@ def run(probe_only=False, live=False):
         print("\n--- Acciones ---")
         stage_cleanup_offers(ctx)
         stage_received_offers(ctx)
-        stage_process_own_sale_offers(ctx)
         ctx.recompute()
         stage_sell_bench(ctx)
         stage_buy(ctx)
         stage_lineup(ctx)
+
+        # Pasada de solo lectura completada con datos frescos: la operación incierta
+        # ya está reflejada en ellos y la siguiente ejecución puede volver a escribir.
+        if ctx.read_only and not ctx.dry_run:
+            n = resolve_unknown_state(ctx)
+            print(f"  🔓 {n} operación(es) de resultado incierto revisadas; se reanudan las escrituras")
 
     except RateLimited as e:
         ctx.rate_limited = True
@@ -237,10 +255,9 @@ def run(probe_only=False, live=False):
         log_action("auth_error", {}, "error")
         return 3
 
-    # Entrenamiento automático nocturno
-    if not DRY_RUN and datetime.now().weekday() == 0 and datetime.now().hour == 3:  # lunes 03:00
-        from biwenger.models import train_and_save
-        train_and_save()
+    save_outputs(ctx, now)
+    print(f"\n  ✅ State: {cfg.STATE_FILE}\n  ✅ Todo:  {cfg.TODO_FILE}")
+
     print(f"\n{'=' * 60}\n✅ Ejecución completada — {len(ctx.actions)} acciones, "
           f"{ctx.write_count} writes, {REQ['count']} peticiones\n{'=' * 60}")
     return 0

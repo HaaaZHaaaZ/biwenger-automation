@@ -1,16 +1,18 @@
-# ⚽ Biwenger Auto-Trader v14.1.0
+# ⚽ Biwenger Auto-Trader v14.2.0
 
 > Automatización inteligente del juego Biwenger vía API REST — login, mercado, alineación, ofertas y más.
 
 ![Python](https://img.shields.io/badge/python-3.9+-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Status](https://img.shields.io/badge/status-production-brightgreen.svg)
-![Version](https://img.shields.io/badge/version-14.1.0-blue.svg)
+![Version](https://img.shields.io/badge/version-14.2.0-blue.svg)
 
 ---
 
 ## 📑 Tabla de contenidos
 
+- [Novedades v14.2.0](#-novedades-v1420-2026-11-01)
+- [Novedades v14.1.0](#-novedades-v1410-2026-11-01)
 - [Novedades v14.0.1](#-novedades-v1401)
 - [Novedades v14.0](#-novedades-v140)
 - [Novedades v13.5](#-novedades-v135)
@@ -28,7 +30,18 @@
 
 ---
 
+## 🆕 Novedades v14.2.0 (2026-11-01)
+
+- **Reglas reales de la liga**: se leen de la API el sistema de puntuación, capitán/ariete, multiposición, cupo y ventas simultáneas. Con capitán desactivado ya no se reenvía la alineación en cada pasada.
+- **Multiposición**: el once se reparte en huecos con `altPositions` cuando la liga lo permite, con reintento en posición real si la API lo rechaza. Añadida la formación 3-6-1.
+- **Scorer nuevo**: media regularizada por posición, forma ponderada, reparto casa/fuera real y rival de la jornada correcta para los 20 equipos. Backtest: +0,51 puntos por jornada (3 jornadas). Deja de usar los modelos ML, que nunca llegaron a estar entrenados.
+- **Ventas por valor de fondo**: una duda puntual ya no pone en venta a un buen jugador. Se conserva el portero de reserva.
+- **Compras por mejora real del once**, y salida del bloqueo 16/16 poniendo a la venta al peor suplente.
+- **Robustez**: una escritura reservada para la alineación y fin del bloqueo indefinido por `unknown_state`. El estado ya no marca `dry_run` en pasadas reales.
+
 ## 🆕 Novedades v14.1.0 (2026-11-01)
+
+> ⚠️ **Superado en v14.2.0:** el scorer ya **no** usa los modelos ML descritos aquí (nunca llegaron a entrenarse). `biwenger/models.py` y `scripts/train_models.py` quedan sin uso.
 
 - **Modelos ML por posición**: Nuevo módulo `biwenger/models.py` con `ModelManager` para modelos `LinearRegression` + `IsotonicRegression` por posición (GK/DEF/MID/FWD). Entrenamiento vía `biwenger/scripts/train_models.py` usando feature store SQLite (`biwenger_features.db`).
 - **Scorer mejorado**: `score_player()` ahora usa predicciones ML cuando hay modelos disponibles, con fallback silencioso a heurística legacy.
@@ -134,7 +147,7 @@ python3 biwenger_daily.py --probe
 
 `verify.sh` devuelve exit code ≠ 0 si falla la compilación, el grep detecta escrituras fuera de `guarded_write`, o falla algún test. La salida completa queda en `VERIFY_OUTPUT.txt`.
 
-**75 tests** cubren: seguridad (abort, read_only, dry_run, límites), timeouts, HTTP 429, concurrencia, persistencia de estado incierto, config, model, scoring, utils.
+**102 tests** (100 pasan, 1 se omite; ver Pendiente sobre `test_ctx_defaults`) cubren: seguridad (abort, read_only, dry_run, límites), timeouts, HTTP 429, concurrencia, persistencia de estado incierto, config, model, scoring, utils.
 
 ---
 
@@ -241,7 +254,12 @@ Fuera del alcance de v13.3, documentado como deuda técnica:
 - `log_action` en JSONL append con `RotatingFileHandler` (hoy: JSON + lock + escritura atómica).
 - Reintento único o estado explícito `rate_limited` en `api()` para 429 en escrituras con `Retry-After ≤ 60s`.
 - Registro de `unknown_outcome` ante 5xx o respuesta ilegible tras enviar una escritura.
-- `resolve_unknown_state` (resolución automática por GET); hoy el modo lectura se levanta borrando el fichero a mano.
+- `test_ctx_defaults` falla si el `.env` local tiene `BIWENGER_DRY_RUN=false`: el cargador de `.env` pisa las variables del entorno, así que el test depende de la configuración local.
+- `biwenger/models.py` y `scripts/train_models.py` (ML de v14.1) ya no se usan: eliminarlos.
+- Revisar si `stage_process_own_sale_offers` debe volver a llamarse desde `cli.py` (en v14.2 no se llama; las ofertas sobre jugadores en venta llegan por `stage_received_offers`).
+
+**Resueltos en v14.2.0:**
+- ✅ `resolve_unknown_state`: la pasada de solo lectura resuelve el estado incierto y la siguiente vuelve a escribir (ya no hay que borrar el fichero a mano).
 
 **Resueltos en v14.0:**
 - ✅ Modularización completa (8 módulos + version.py)

@@ -19,7 +19,7 @@ def test_constants_present():
     assert "4-4-2" in [f[0] for f in FORMATIONS]
     assert "injured" in BAD_STATUS
     assert POS_NAMES[1] == "GK"
-    assert "players(id)," in SQUAD_FIELDS
+    assert "players(id" in SQUAD_FIELDS
 
 
 def test_version_consistency():
@@ -30,7 +30,7 @@ def test_version_consistency():
     assert VERSION == __version__
     assert pkg_version == __version__
     # Updated version for new model features
-    assert __version__ == "14.1.0"
+    assert __version__ == "14.2.0"
 
 def test_env_helpers():
     from biwenger.config import env_str, env_int, env_float, env_bool

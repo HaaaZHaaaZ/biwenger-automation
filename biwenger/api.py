@@ -34,10 +34,12 @@ def api(method, url, token=None, league_id=None, user_id=None, body=None):
     - GET: reintenta ante errores de red con backoff corto (2s/4s/8s, tope 60s).
     - POST/PUT/DELETE: NO reintenta tras timeout/error de lectura (evita duplicar ofertas/ventas);
       solo reintenta ante 429 respetando Retry-After (acotado a 60s).
+    - 429 sin Retry-After utilizable o con reintentos agotados: lanza RateLimited y run() activa la pausa.
+    - 429 con Retry-After > 60s: aborta la ejecución y devuelve None.
     - Presupuesto global de espera: si se agota, aborta limpio.
     """
     is_write = method.upper() in ("POST", "PUT", "DELETE", "PATCH")
-    max_retries = cfg.MAX_RETRIES if method.upper() == "GET" else 0
+    max_retries = cfg.MAX_RETRIES
     backoff = [2, 4, 8]
     for attempt in range(max_retries + 1):
         model._inc_REQ()
@@ -66,31 +68,34 @@ def api(method, url, token=None, league_id=None, user_id=None, body=None):
                         ctx.abort = True
                     return None
                 model._add_WAITED(sleep)
+                time.sleep(sleep)
                 continue
             log_action("network_error", {"method": method, "url": url, "error": str(e)}, "error")
             return None
         if cfg.REQUEST_DELAY > 0:
             time.sleep(random.uniform(0.7, 1.3) * cfg.REQUEST_DELAY)
         if r.status_code == 429:
-            retry_after = r.headers.get("Retry-After")
             try:
-                wait = int(retry_after) if retry_after else int(cfg.RATE_LIMIT_WAIT_HOURS * 3600)
+                wait = max(int(r.headers.get("Retry-After")), 0)
             except (TypeError, ValueError):
-                wait = int(cfg.RATE_LIMIT_WAIT_HOURS * 3600)
+                raise model.RateLimited(url) from None
             if wait > 60:
                 log_action("retry_after_too_long", {"wait": wait, "url": url}, "warning")
                 ctx = model._get_CTX()
                 if ctx is not None:
                     ctx.abort = True
                 return None
-            wait = min(wait, 60)
-            if attempt < (cfg.MAX_RETRIES if is_write else max_retries):
+            if attempt < max_retries:
                 waited = model._get_WAITED()
                 budget = model._get_WAIT_BUDGET()
                 if waited + wait > budget:
                     log_action("wait_budget_exhausted", {"waited": waited, "budget": budget}, "warning")
+                    ctx = model._get_CTX()
+                    if ctx is not None:
+                        ctx.abort = True
                     return None
                 model._add_WAITED(wait)
+                time.sleep(wait)
                 continue
             raise model.RateLimited(url)
         if r.status_code == 401:
@@ -140,7 +145,8 @@ def get_account(token):
     leagues = data.get("leagues", [])
     if not leagues:
         return None, None, None, None, "?"
-    league = leagues[0]
+    # Con varias ligas en la cuenta, respetar la configurada (antes: siempre la primera).
+    league = next((l for l in leagues if l.get("id") == cfg.LEAGUE_ID), leagues[0])
     user = league.get("user", {})
     league_id = league.get("id")
     user_id = user.get("id")
@@ -158,6 +164,8 @@ def get_squad(ctx):
         return None, None, None
     data = r.json().get("data", {})
     squad_ids = [p.get("id") for p in data.get("players", []) if isinstance(p, dict) and p.get("id")]
+    ctx.owner_info = {p["id"]: (p.get("owner") or {}) for p in data.get("players", [])
+                      if isinstance(p, dict) and p.get("id")}
     lineup = data.get("lineup") or {}
     return squad_ids, lineup, lineup.get("players") or []
 
@@ -165,12 +173,32 @@ def get_squad(ctx):
 def get_catalog(ctx):
     """Catálogo de La Liga: posición, estado, puntos, forma, precio, equipo."""
     r = api("GET",
-            "https://cf.biwenger.com/api/v2/competitions/la-liga/data?lang=es&score=3",
+            f"https://cf.biwenger.com/api/v2/competitions/la-liga/data?lang=es&score={getattr(ctx, 'score_id', 3)}",
             ctx.token, ctx.league_id, ctx.user_id)
     if r is None or r.status_code != 200:
         return {}, {}
     data = r.json().get("data", {})
     return (data.get("players") or {}), (data.get("teams") or {})
+
+
+def get_league_settings(ctx):
+    """Configuración real de la liga (sistema de puntuación, capitán, multiposición, cupos...)."""
+    r = api("GET", "https://biwenger.as.com/api/v2/league?fields=*,settings",
+            ctx.token, ctx.league_id, ctx.user_id)
+    if r is None or r.status_code != 200:
+        log_action("league_settings_unavailable", {}, "warning")
+        return None
+    return r.json().get("data") or None
+
+
+def get_round_data(ctx):
+    """Jornada de La Liga: partidos de la actual y de la siguiente, con dificultad para los 20 equipos."""
+    r = api("GET", "https://biwenger.as.com/api/v2/rounds/la-liga",
+            ctx.token, ctx.league_id, ctx.user_id)
+    if r is None or r.status_code != 200:
+        log_action("round_data_unavailable", {}, "warning")
+        return None
+    return r.json().get("data") or None
 
 
 def get_round_name(ctx):
@@ -187,7 +215,9 @@ def get_market(ctx):
             ctx.token, ctx.league_id, ctx.user_id)
     if r is None or r.status_code != 200:
         return [], []
-    sales = (r.json().get("data") or {}).get("sales", [])
+    data = r.json().get("data") or {}
+    sales = data.get("sales", [])
+    ctx.maximum_bid = (data.get("status") or {}).get("maximumBid") or 0
     free_sales = [s for s in sales if s.get("user") is None]
     own_sales = [s for s in sales if (s.get("user") or {}).get("id") == ctx.user_id]
     return free_sales, own_sales

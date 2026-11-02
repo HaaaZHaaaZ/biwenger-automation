@@ -38,7 +38,7 @@ def validate_account(account_name, dry_run=True):
     os.environ["BIWENGER_LEAGUE_ID"] = acc["league"]
     os.environ["BIWENGER_USER_ID"] = acc["user"]
     os.environ["BIWENGER_DRY_RUN"] = str(dry_run)
-    os.environ["BIWENGER_MAX_WRITES"] = "8"
+    os.environ["BIWENGER_MAX_WRITES"] = "15"
     os.environ["BIWENGER_MAX_BUYS"] = "2"
     os.environ["BIWENGER_MAX_SELLS"] = "6"
 

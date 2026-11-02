@@ -89,7 +89,7 @@ except OSError:
 MAX_LOG_ENTRIES = env_int("BIWENGER_MAX_LOG_ENTRIES", 1500)
 
 # Límites de actividad
-MAX_WRITES = env_int("BIWENGER_MAX_WRITES", 8)
+MAX_WRITES = env_int("BIWENGER_MAX_WRITES", 15)
 MAX_BUYS = env_int("BIWENGER_MAX_BUYS", 2)
 MAX_SELLS = env_int("BIWENGER_MAX_SELLS", 6)  # Aumentado de 4 a 6
 MIN_SQUAD = env_int("BIWENGER_MIN_SQUAD", 12)      # nunca bajar de esta plantilla por ventas
@@ -101,7 +101,8 @@ SELL_BENCH_WHEN_LINEUP_READY = env_bool("BIWENGER_SELL_BENCH_LINEUP_READY", True
 DRY_RUN = env_bool("BIWENGER_DRY_RUN", True)
 
 # Alineación / scorer
-MIN_LINEUP_GAIN = env_float("BIWENGER_MIN_LINEUP_GAIN", 0.05)
+# Cambiar la alineación es gratis (lineupChanges=-1): basta una mejora mínima.
+MIN_LINEUP_GAIN = env_float("BIWENGER_MIN_LINEUP_GAIN", 0.005)
 SELL_SCORE_MIN = env_float("BIWENGER_SELL_SCORE_MIN", 2.0)
 MATCH_SOON_HOURS = env_float("BIWENGER_MATCH_SOON_HOURS", 48)
 MIN_P_START_BUY = env_float("BIWENGER_MIN_P_START_BUY", 0.7)
@@ -111,6 +112,8 @@ CAPTAIN_MAX_VALUE = env_int("BIWENGER_CAPTAIN_MAX_VALUE", 0)  # 0 = sin tope de 
 
 # Compras / pujas
 BUY_MARGIN = env_float("BIWENGER_BUY_MARGIN", 0.03)  # Reducido de 0.05 a 0.03 para compras más agresivas
+# Mejora mínima del once (puntos esperados por jornada) que justifica gastar en un fichaje.
+MIN_BUY_GAIN = env_float("BIWENGER_MIN_BUY_GAIN", 0.30)
 CUSHION_PCT = env_float("BIWENGER_CUSHION_PCT", 0.05)  # Reducido de 0.08 a 0.05
 CUSHION_MIN = env_int("BIWENGER_CUSHION_MIN", 500000)
 BID_LOW = env_float("BIWENGER_BID_LOW", 1.04)
@@ -152,10 +155,26 @@ FORMATIONS = [
     ("5-3-2", 5, 3, 2),
     ("4-5-1", 4, 5, 1),
     ("5-4-1", 5, 4, 1),
+    ("3-6-1", 3, 6, 1),   # visto en alineaciones reales de rivales de la liga
 ]
 
+# Puntos medios por partido según posición en el sistema "Estadísticas" (scoreID=3),
+# medidos sobre el catálogo real 2026/27. Sirven para regularizar muestras pequeñas.
+POS_PRIOR = {1: 2.3, 2: 3.4, 3: 3.3, 4: 2.9}
+PRIOR_GAMES = 4          # peso del prior, en partidos equivalentes
+RECENT_WEIGHT = 0.30     # peso de la forma reciente frente a la media de temporada
+P_START_POWER = 1.5      # penaliza más al suplente habitual (backtest)
+# Sensibilidad al rival por posición: la portería a cero (+3 GK/DEF, +1 MID) y los goles
+# encajados (-1 GK, -0.3 DEF) hacen a la defensa más dependiente del rival. Criterio experto.
+FIXTURE_SENSITIVITY = {1: 0.30, 2: 0.25, 3: 0.10, 4: 0.15}
+# Multiposición: los puntos cambian según la posición en la que se alinea al jugador
+# (la API lo desglosa en reports[].altPositions). Diferencia media (posición real,
+# posición alineada) en la jornada 11, muestra pequeña: revisar con más jornadas.
+ALT_POS_DELTA = {(2, 3): 0.50, (3, 2): -1.00, (3, 4): -0.25, (4, 2): -0.50, (4, 3): -0.35}
+ALT_POS_DELTA_DEFAULT = -0.50
+
 SQUAD_FIELDS = (
-    "players(id),"
+    "players(id,owner(date,price)),"
     "lineup(round,id,type,playersID,reservesID,"
     "players(id,name,position,altPositions,status,fitness,points,price,"
     "team(id,name,slug,nextGames(*))))"

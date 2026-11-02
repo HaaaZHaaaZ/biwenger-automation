@@ -1,16 +1,17 @@
 # Scorer y límites del sistema — Biwenger Auto-Trader
 
-## Scorer
+## Scorer (v14.2.0)
 
 ```
-score = (0.35·ppp + 0.35·forma5 + 0.90·facilidad_rival) × mult_estado × p_start
+base  = 0,7·media_temporada + 0,3·forma_reciente
+base  = (partidos·base + 4·media_posición) / (partidos + 4)
+score = base × local × rival × mult_estado × p_jugar^1,5
 ```
 
-**p_start** (probabilidad de titularidad):
-- Histórico de minutos últimas 3-5 jornadas
-- 90′ consistentes → ~0.9-1.0
-- Rotación → 0.5-0.7
-- Sin minutos → <0.3
+- **p_jugar**: últimos 5 partidos ponderados; las bajas no cuentan en contra.
+- **Rival**: `difficulty.rating` de la jornada objetivo, con sensibilidad por posición.
+- **Valor de fondo** (`player_value`): base × p_jugar^1,5, sin estado ni rival. Decide las ventas.
+- Los parámetros están en `biwenger/config.py`.
 
 **Multiplicadores de estado:**
 
@@ -25,8 +26,8 @@ score = (0.35·ppp + 0.35·forma5 + 0.90·facilidad_rival) × mult_estado × p_s
 
 | Recurso | Límite |
 |---------|--------|
-| Peticiones por sesión | **10** máximo |
-| Sesiones por día | **2** (9:00 AM / 9:00 PM) |
+| Peticiones por sesión | ~8 en una pasada normal |
+| Sesiones por día | **2** (9:00 / 21:00 UTC) |
 | Reintentos tras error | **1** |
 | Timeout por petición | **30s** |
 | Espera tras 429 | **4 horas** |
